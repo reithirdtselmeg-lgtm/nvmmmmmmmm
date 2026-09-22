@@ -12,7 +12,7 @@ local ContentProvider = game:GetService("ContentProvider")
 local Lighting = game:GetService("Lighting")  
 local TweenService = game:GetService("TweenService")  
 local RunService = game:GetService("RunService")  
-  
+  if not load
 local LocalPlayer = Players.LocalPlayer  
   
 --// V2 SOURCE //--  
@@ -475,59 +475,88 @@ end
     return patchedSource  
 end  
   
---// Load patched V2 //--  
-  
-getgenv().VynixuEntitySpawnerV2 = nil  
-  
-local Original  
-  
-do  
-    local ok, source =      
-        pcall(function()      
-            return game:HttpGet(V2_URL)      
-        end)      
-  
-    if not ok      
-        or typeof(source) ~= "string" then      
-  
-        error(      
-            "V3 Brain: failed to download V2 source."      
-        )      
-  
-    end      
-  
-    local patchOk, patchedSource =      
-        pcall(function()      
-            return PatchV2Source(source)      
-        end)      
-  
-    if not patchOk then      
-        error(      
-            "V3 Brain: failed to patch V2 movement:\n"      
-            .. tostring(patchedSource)      
-        )      
-    end      
-  
-    local loadOk, result =      
-        pcall(function()      
-            return loadstring(patchedSource)()      
-        end)      
-  
-    if not loadOk      
-        or typeof(result) ~= "table" then      
-  
-        error(      
-            "V3 Brain: failed to load patched V2:\n"      
-            .. tostring(result)      
-        )      
-  
-    end      
-  
-    Original = result      
-  
-    getgenv().VynixuEntitySpawnerV2 =      
-        Original  
-end  
+--// Load patched V2 //--
+
+getgenv().VynixuEntitySpawnerV2 = nil
+
+local Original
+
+do
+    local ok, source = pcall(function()
+        return game:HttpGet(V2_URL)
+    end)
+
+    if not ok
+        or typeof(source) ~= "string" then
+
+        error(
+            "V3 Brain: failed to download V2 source."
+        )
+    end
+
+    local patchOk, patchedSource = pcall(function()
+        return PatchV2Source(source)
+    end)
+
+    if not patchOk then
+        error(
+            "V3 Brain: failed to patch V2 movement:\n"
+            .. tostring(patchedSource)
+        )
+    end
+
+    --// compile V2 //--
+
+    local compileOk, V2Function = pcall(function()
+        local fn, err = loadstring(patchedSource)
+
+        if not fn then
+            error(
+                "V3 Brain: patched V2 COMPILE ERROR:\n"
+                .. tostring(err)
+            )
+        end
+
+        return fn
+    end)
+
+    if not compileOk then
+        error(tostring(V2Function))
+    end
+
+    --// execute V2 //--
+
+    local runOk, result = pcall(function()
+        return V2Function()
+    end)
+
+    if not runOk then
+        error(
+            "V3 Brain: patched V2 EXECUTION ERROR:\n"
+            .. tostring(result)
+        )
+    end
+
+    if typeof(result) ~= "table" then
+        error(
+            "V3 Brain: patched V2 returned "
+            .. typeof(result)
+            .. " instead of a table."
+        )
+    end
+
+    if typeof(result.Create) ~= "function" then
+        error(
+            "V3 Brain: patched V2 loaded, "
+            .. "but Create is missing."
+        )
+    end
+
+    Original = result
+
+    getgenv().VynixuEntitySpawnerV2 =
+        Original
+end
   
 --// colors //--  
   
@@ -1740,16 +1769,17 @@ local function BuildV2Config(
                 or 0      
         },      
   
-        Movement = {      
-            Speed =      
-                config.Movement.Speed,      
-  
-            Delay =      
-                config.Movement.Delay,      
-  
-            Reversed =      
-                config.Movement.Reversed      
-        },      
+        Movement = {
+    Speed = config.Movement.Speed,
+
+    Delay = config.Movement.Delay,
+
+    Reversed = config.Movement.Reversed,
+
+    FollowPlayer = config.Movement.FollowPlayer == true,
+
+    FollowPlayerDespawnTime = config.Movement.FollowPlayerDespawnTime
+},
   
         Damage = {      
             Enabled =      
@@ -1976,7 +2006,7 @@ local function SetupCallbacks(
         "OnDespawning",      
         function()      
             FadeOutActiveSounds(      
-                0.3      
+                0.9     
             )      
   
             RemoveEnvironment(      
@@ -2189,7 +2219,7 @@ if config.Movement and config.Movement.FollowPlayer == true then
 
         local function GetPlayerRoom()
             local num = LocalPlayer:GetAttribute("CurrentRoom")
-            if num \~= nil then
+            if num ~= nil then
                 local room = CurrentRooms:FindFirstChild(tostring(num))
                 if room then return room end
             end
@@ -2249,7 +2279,7 @@ if config.Movement and config.Movement.FollowPlayer == true then
             local step = (pNum > eNum) and 1 or -1
             local current = eNum
 
-            while current \~= pNum do
+            while current ~= pNum do
                 local room = CurrentRooms:FindFirstChild(tostring(current))
                 if room then
                     local roomNodes = GetNodesFromRoom(room)
