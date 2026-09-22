@@ -2139,573 +2139,259 @@ function Brain.Spawn(config)
         )      
     end
 
-    if config.Movement and config.Movement.FollowPlayer == true then
-        task.spawn(function()
-            local model = entity.Model
-            if not model then
+ -- ============================================================
+-- FOLLOW PLAYER OVERRIDE
+-- Nodes between rooms → direct wall chase when in same room
+-- ============================================================
+if config.Movement and config.Movement.FollowPlayer == true then
+    task.spawn(function()
+        local model = entity.Model
+        if not model then return end
+
+        -- Completely freeze V2 so it never fights us
+        model:SetAttribute("Paused", true)
+
+        local speed = entity.Config.Movement.Speed
+        local heightOffset = config.HeightOffset or 0
+        local despawnTime = tonumber(config.Movement.FollowPlayerDespawnTime) or 45
+        local startTime = os.clock()
+
+        local CurrentRooms = workspace:WaitForChild("CurrentRooms")
+        local nodes = {}
+        local nodeIndex = 1
+        local directChasing = false
+        local lastRebuild = 0
+
+        local function GetRoomAtPoint(pos)
+            local whitelist = {}
+            for _, room in ipairs(CurrentRooms:GetChildren()) do
+                local p = room:FindFirstChild(room.Name)
+                if p and p:IsA("BasePart") then
+                    table.insert(whitelist, p)
+                end
+            end
+            if #whitelist == 0 then return nil end
+
+            local params = RaycastParams.new()
+            params.FilterType = Enum.RaycastFilterType.Include
+            params.FilterDescendantsInstances = whitelist
+            params.CollisionGroup = "BaseCheck"
+
+            local result = workspace:Raycast(pos, Vector3.new(0, -100, 0), params)
+            if not result then return nil end
+
+            for _, room in ipairs(CurrentRooms:GetChildren()) do
+                if result.Instance.Parent == room then
+                    return room
+                end
+            end
+            return nil
+        end
+
+        local function GetPlayerRoom()
+            local num = LocalPlayer:GetAttribute("CurrentRoom")
+            if num \~= nil then
+                local room = CurrentRooms:FindFirstChild(tostring(num))
+                if room then return room end
+            end
+            local char = LocalPlayer.Character
+            local root = char and (char.PrimaryPart or char:FindFirstChild("HumanoidRootPart"))
+            if root then
+                return GetRoomAtPoint(root.Position)
+            end
+            return nil
+        end
+
+        local function GetNodesFromRoom(room)
+            local list = {}
+            if not room then return list end
+
+            local entrance = room:FindFirstChild("RoomEntrance")
+            if entrance then
+                local n = entrance:Clone()
+                n.Name = "0"
+                n.CFrame = n.CFrame - Vector3.new(0, 3, 0)
+                table.insert(list, n)
+            end
+
+            local folder = room:FindFirstChild("PathfindNodes")
+            if folder then
+                for _, n in ipairs(folder:GetChildren()) do
+                    table.insert(list, n)
+                end
+            end
+
+            local exit = room:FindFirstChild("RoomExit")
+            if exit then
+                local n = exit:Clone()
+                n.Name = tostring(#list)
+                n.CFrame = n.CFrame - Vector3.new(0, 3, 0)
+                table.insert(list, n)
+            end
+
+            table.sort(list, function(a, b)
+                return tonumber(a.Name) < tonumber(b.Name)
+            end)
+            return list
+        end
+
+        local function BuildRouteToPlayer()
+            table.clear(nodes)
+            nodeIndex = 1
+
+            local entityRoom = GetRoomAtPoint(model:GetPivot().Position)
+            local playerRoom = GetPlayerRoom()
+            if not entityRoom or not playerRoom then return end
+
+            local eNum = tonumber(entityRoom.Name)
+            local pNum = tonumber(playerRoom.Name)
+            if not eNum or not pNum or eNum == pNum then return end
+
+            local step = (pNum > eNum) and 1 or -1
+            local current = eNum
+
+            while current \~= pNum do
+                local room = CurrentRooms:FindFirstChild(tostring(current))
+                if room then
+                    local roomNodes = GetNodesFromRoom(room)
+                    if step == 1 then
+                        for _, n in ipairs(roomNodes) do
+                            table.insert(nodes, n)
+                        end
+                    else
+                        for i = #roomNodes, 1, -1 do
+                            table.insert(nodes, roomNodes[i])
+                        end
+                    end
+                end
+                current = current + step
+            end
+
+            -- also add the final room's nodes
+            local final = CurrentRooms:FindFirstChild(tostring(pNum))
+            if final then
+                local finalNodes = GetNodesFromRoom(final)
+                if step == 1 then
+                    for _, n in ipairs(finalNodes) do
+                        table.insert(nodes, n)
+                    end
+                else
+                    for i = #finalNodes, 1, -1 do
+                        table.insert(nodes, finalNodes[i])
+                    end
+                end
+            end
+        end
+
+        local connection
+        connection = RunService.Heartbeat:Connect(function(dt)
+            if not entity:IsAlive() or not model.Parent then
+                connection:Disconnect()
                 return
             end
 
-            local speed =
-                tonumber(entity.Config.Movement.Speed)
-                or tonumber(config.Movement.Speed)
-                or 50
+            if model:GetAttribute("BeingBanished") then return end
 
-            local heightOffset =
-                tonumber(config.HeightOffset)
-                or 0
-
-            local despawnTime =
-                tonumber(config.Movement.FollowPlayerDespawnTime)
-                or 45
-
-            local startTime = os.clock()
-
-            local CurrentRooms =
-                workspace:WaitForChild("CurrentRooms")
-
-            local directChasing = false
-            local currentTargetRoom = nil
-            local nodeIndex = 1
-            local nodes = {}
-
-            local connection
-
-            local function GetRoomAtPoint(position)
-                local whitelist = {}
-
-                for _, room in ipairs(CurrentRooms:GetChildren()) do
-                    local roomPart =
-                        room:FindFirstChild(room.Name)
-
-                    if roomPart
-                        and roomPart:IsA("BasePart")
-                    then
-                        table.insert(
-                            whitelist,
-                            roomPart
-                        )
-                    end
-                end
-
-                if #whitelist == 0 then
-                    return nil
-                end
-
-                local params =
-                    RaycastParams.new()
-
-                params.FilterType =
-                    Enum.RaycastFilterType.Include
-
-                params.FilterDescendantsInstances =
-                    whitelist
-
-                params.CollisionGroup =
-                    "BaseCheck"
-
-                local result =
-                    workspace:Raycast(
-                        position,
-                        Vector3.new(0, -100, 0),
-                        params
-                    )
-
-                if not result then
-                    return nil
-                end
-
-                for _, room in ipairs(CurrentRooms:GetChildren()) do
-                    if result.Instance.Parent == room then
-                        return room
-                    end
-                end
-
-                return nil
+            -- keep V2 frozen forever
+            if not model:GetAttribute("Paused") then
+                model:SetAttribute("Paused", true)
             end
 
-            local function GetPlayerRoom()
-                local roomNumber =
-                    LocalPlayer:GetAttribute(
-                        "CurrentRoom"
-                    )
+            local entityRoom = GetRoomAtPoint(model:GetPivot().Position)
+            local playerRoom = GetPlayerRoom()
+            local sameRoom = entityRoom and playerRoom and entityRoom == playerRoom
 
-                if roomNumber ~= nil then
-                    local room =
-                        CurrentRooms:FindFirstChild(
-                            tostring(roomNumber)
-                        )
-
-                    if room then
-                        return room
-                    end
-                end
-
-                local char =
-                    LocalPlayer.Character
-
-                local root =
-                    char
-                    and (
-                        char.PrimaryPart
-                        or char:FindFirstChild(
-                            "HumanoidRootPart"
-                        )
-                    )
-
-                if root then
-                    return GetRoomAtPoint(
-                        root.Position
-                    )
-                end
-
-                return nil
-            end
-
-            local function GetNodesFromRoom(room)
-                local roomNodes = {}
-
-                if not room then
-                    return roomNodes
-                end
-
-                local entrance =
-                    room:FindFirstChild(
-                        "RoomEntrance"
-                    )
-
-                if entrance then
-                    local clone =
-                        entrance:Clone()
-
-                    clone.Name = "0"
-
-                    clone.CFrame =
-                        clone.CFrame
-                        - Vector3.new(0, 3, 0)
-
-                    table.insert(
-                        roomNodes,
-                        clone
-                    )
-                end
-
-                local pathfindNodes =
-                    room:FindFirstChild(
-                        "PathfindNodes"
-                    )
-
-                if pathfindNodes then
-                    for _, node in ipairs(
-                        pathfindNodes:GetChildren()
-                    ) do
-                        table.insert(
-                            roomNodes,
-                            node
-                        )
-                    end
-                end
-
-                local exit =
-                    room:FindFirstChild(
-                        "RoomExit"
-                    )
-
-                if exit then
-                    local clone =
-                        exit:Clone()
-
-                    clone.Name =
-                        tostring(#roomNodes)
-
-                    clone.CFrame =
-                        clone.CFrame
-                        - Vector3.new(0, 3, 0)
-
-                    table.insert(
-                        roomNodes,
-                        clone
-                    )
-                end
-
-                table.sort(
-                    roomNodes,
-                    function(a, b)
-                        return tonumber(a.Name)
-                            < tonumber(b.Name)
-                    end
-                )
-
-                return roomNodes
-            end
-
-            local function BuildRoute()
+            if sameRoom then
+                -- ========== DIRECT WALL CHASE ==========
+                directChasing = true
                 table.clear(nodes)
-
                 nodeIndex = 1
 
-                local entityRoom =
-                    GetRoomAtPoint(
-                        model:GetPivot().Position
-                    )
+                local char = LocalPlayer.Character
+                local root = char and (char.PrimaryPart or char:FindFirstChild("HumanoidRootPart"))
+                if not root then return end
 
-                local playerRoom =
-                    GetPlayerRoom()
+                local target = root.Position + Vector3.new(0, heightOffset, 0)
+                local pivot = model:GetPivot()
+                local diff = target - pivot.Position
+                local dist = diff.Magnitude
 
-                if not entityRoom
-                    or not playerRoom
-                then
-                    return
-                end
+                if dist > 0.2 then
+                    local dir = diff.Unit
+                    local move = math.min(speed * dt, dist)
+                    local newPos = pivot.Position + dir * move
 
-                local entityNumber =
-                    tonumber(entityRoom.Name)
-
-                local playerNumber =
-                    tonumber(playerRoom.Name)
-
-                if not entityNumber
-                    or not playerNumber
-                then
-                    return
-                end
-
-                currentTargetRoom =
-                    playerRoom
-
-                if entityNumber == playerNumber then
-                    return
-                end
-
-                local step = (playerNumber > entityNumber) and 1 or -1
-                local roomNumber = entityNumber
-
-                while roomNumber ~= playerNumber do
-                    local room =
-                        CurrentRooms:FindFirstChild(
-                            tostring(roomNumber)
-                        )
-
-                    if room then
-                        local roomNodes =
-                            GetNodesFromRoom(room)
-
-                        if step == -1 then
-                            for i = #roomNodes, 1, -1 do
-                                table.insert(nodes, roomNodes[i])
-                            end
-                        else
-                            for _, node in ipairs(roomNodes) do
-                                table.insert(nodes, node)
-                            end
-                        end
+                    local flat = Vector3.new(dir.X, 0, dir.Z)
+                    if flat.Magnitude > 0.001 then
+                        model:PivotTo(CFrame.lookAt(newPos, newPos + flat))
+                    else
+                        model:PivotTo(CFrame.new(newPos) * (pivot - pivot.Position))
                     end
-
-                    roomNumber = roomNumber + step
+                end
+            else
+                -- ========== NODE PATH BETWEEN ROOMS ==========
+                if directChasing or #nodes == 0 or (os.clock() - lastRebuild) > 2 then
+                    directChasing = false
+                    BuildRouteToPlayer()
+                    lastRebuild = os.clock()
                 end
 
-                local finalRoom =
-                    CurrentRooms:FindFirstChild(
-                        tostring(playerNumber)
-                    )
+                if #nodes > 0 and nodeIndex <= #nodes then
+                    local node = nodes[nodeIndex]
+                    if node and node.Parent then
+                        local target = node.Position + Vector3.new(0, heightOffset, 0)
+                        local pivot = model:GetPivot()
+                        local diff = target - pivot.Position
+                        local dist = diff.Magnitude
 
-                if finalRoom then
-                    local finalNodes =
-                        GetNodesFromRoom(finalRoom)
+                        if dist <= 2.5 then
+                            nodeIndex = nodeIndex + 1
+                        else
+                            local dir = diff.Unit
+                            local move = math.min(speed * dt, dist)
+                            local newPos = pivot.Position + dir * move
 
-                    if step == -1 then
-                        for i = #finalNodes, 1, -1 do
-                            table.insert(nodes, finalNodes[i])
+                            local flat = Vector3.new(dir.X, 0, dir.Z)
+                            if flat.Magnitude > 0.001 then
+                                model:PivotTo(CFrame.lookAt(newPos, newPos + flat))
+                            else
+                                model:PivotTo(CFrame.new(newPos) * (pivot - pivot.Position))
+                            end
                         end
                     else
-                        for _, node in ipairs(finalNodes) do
-                            table.insert(nodes, node)
-                        end
+                        nodeIndex = nodeIndex + 1
                     end
                 end
             end
 
-            local function ChasePlayer(dt)
-                local char =
-                    LocalPlayer.Character
+            -- Despawn timer
+            if despawnTime > 0 and (os.clock() - startTime) >= despawnTime then
+                connection:Disconnect()
+                if not model:GetAttribute("Despawning") then
+                    model:SetAttribute("Despawning", true)
+                    task.spawn(entity.RunCallback, entity, "OnDespawning")
 
-                local root =
-                    char
-                    and (
-                        char.PrimaryPart
-                        or char:FindFirstChild(
-                            "HumanoidRootPart"
-                        )
-                    )
-
-                if not root then
-                    return
-                end
-
-                local targetPosition =
-                    root.Position
-                    + Vector3.new(
-                        0,
-                        heightOffset,
-                        0
-                    )
-
-                local pivot =
-                    model:GetPivot()
-
-                local difference =
-                    targetPosition
-                    - pivot.Position
-
-                local distance =
-                    difference.Magnitude
-
-                if distance <= 0.15 then
-                    return
-                end
-
-                local direction =
-                    difference.Unit
-
-                local movement =
-                    math.min(
-                        speed * dt,
-                        distance
-                    )
-
-                local newPosition =
-                    pivot.Position
-                    + direction * movement
-
-                local flatDirection =
-                    Vector3.new(
-                        direction.X,
-                        0,
-                        direction.Z
-                    )
-
-                if flatDirection.Magnitude > 0.001 then
-                    model:PivotTo(
-                        CFrame.lookAt(
-                            newPosition,
-                            newPosition
-                                + flatDirection
-                        )
-                    )
-                else
-                    local rotationOnly =
-                        pivot
-                        - pivot.Position
-
-                    model:PivotTo(
-                        CFrame.new(newPosition)
-                        * rotationOnly
-                    )
-                end
-            end
-
-            local function MoveToNode(node, dt)
-                if not node
-                    or not node.Parent
-                then
-                    return true
-                end
-
-                local targetPosition =
-                    node.Position
-
-                local pivot =
-                    model:GetPivot()
-
-                local difference =
-                    targetPosition
-                    - pivot.Position
-
-                local distance =
-                    difference.Magnitude
-
-                if distance <= 1.5 then
-                    return true
-                end
-
-                local direction =
-                    difference.Unit
-
-                local movement =
-                    math.min(
-                        speed * dt,
-                        distance
-                    )
-
-                local newPosition =
-                    pivot.Position
-                    + direction * movement
-
-                local flatDirection =
-                    Vector3.new(
-                        direction.X,
-                        0,
-                        direction.Z
-                    )
-
-                if flatDirection.Magnitude > 0.001 then
-                    model:PivotTo(
-                        CFrame.lookAt(
-                            newPosition,
-                            newPosition
-                                + flatDirection
-                        )
-                    )
-                else
-                    local rotationOnly =
-                        pivot
-                        - pivot.Position
-
-                    model:PivotTo(
-                        CFrame.new(newPosition)
-                        * rotationOnly
-                    )
-                end
-
-                return false
-            end
-
-            connection =
-                RunService.Heartbeat:Connect(
-                    function(dt)
-                        if not entity:IsAlive()
-                            or not model.Parent
-                        then
-                            connection:Disconnect()
+                    local sinkTarget = model:GetPivot().Position - Vector3.new(0, 300, 0)
+                    local sinkConn
+                    sinkConn = RunService.Heartbeat:Connect(function(dt2)
+                        if not model.Parent then
+                            sinkConn:Disconnect()
                             return
                         end
-
-                        if model:GetAttribute(
-                            "BeingBanished"
-                        ) then
+                        local p = model:GetPivot()
+                        local d = sinkTarget - p.Position
+                        if d.Magnitude <= 2 then
+                            sinkConn:Disconnect()
+                            entity:Despawn()
                             return
                         end
-
-                        local entityRoom =
-                            GetRoomAtPoint(
-                                model:GetPivot().Position
-                            )
-
-                        local playerRoom =
-                            GetPlayerRoom()
-
-                        if entityRoom
-                            and playerRoom
-                            and entityRoom == playerRoom
-                        then
-                            if not directChasing then
-                                directChasing = true
-                                table.clear(nodes)
-                                nodeIndex = 1
-                            end
-
-                            ChasePlayer(dt)
-                        else
-                            if directChasing then
-                                directChasing = false
-                                BuildRoute()
-                            elseif #nodes == 0 then
-                                BuildRoute()
-                            end
-
-                            if not directChasing
-                                and #nodes > 0
-                            then
-                                local node =
-                                    nodes[nodeIndex]
-
-                                if MoveToNode(
-                                    node,
-                                    dt
-                                ) then
-                                    nodeIndex =
-                                        nodeIndex + 1
-
-                                    if nodeIndex
-                                        > #nodes
-                                    then
-                                        BuildRoute()
-                                    end
-                                end
-                            end
-                        end
-
-                        if despawnTime > 0
-                            and (
-                                os.clock()
-                                - startTime
-                            ) >= despawnTime
-                        then
-                            connection:Disconnect()
-
-                            if not model:GetAttribute(
-                                "Despawning"
-                            ) then
-                                model:SetAttribute(
-                                    "Despawning",
-                                    true
-                                )
-
-                                task.spawn(
-                                    entity.RunCallback,
-                                    entity,
-                                    "OnDespawning"
-                                )
-
-                                local sinkTarget =
-                                    model:GetPivot().Position
-                                    - Vector3.new(
-                                        0,
-                                        300,
-                                        0
-                                    )
-
-                                local sinkConnection
-
-                                sinkConnection =
-                                    RunService.Heartbeat:Connect(
-                                        function(dt2)
-                                            if not model.Parent then
-                                                sinkConnection:Disconnect()
-                                                return
-                                            end
-
-                                            local pivot =
-                                                model:GetPivot()
-
-                                            local difference =
-                                                sinkTarget
-                                                - pivot.Position
-
-                                            if difference.Magnitude <= 2 then
-                                                sinkConnection:Disconnect()
-                                                entity:Despawn()
-                                                return
-                                            end
-
-                                            model:PivotTo(
-                                                pivot
-                                                + difference.Unit
-                                                * math.min(
-                                                    speed
-                                                        * dt2
-                                                        * 1.8,
-                                                    difference.Magnitude
-                                                )
-                                            )
-                                        end
-                                    )
-                            end
-                        end
-                    end
-                )
+                        model:PivotTo(p + d.Unit * math.min(speed * dt2 * 1.8, d.Magnitude))
+                    end)
+                end
+            end
         end)
-    end
+    end)
+end
 
     getgenv().VynixuEntitySpawnerV3 =      
         Brain      
