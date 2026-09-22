@@ -11,8 +11,7 @@ local Players = game:GetService("Players")
 local ContentProvider = game:GetService("ContentProvider")  
 local Lighting = game:GetService("Lighting")  
 local TweenService = game:GetService("TweenService")  
-local RunService = game:GetService("RunService")  
-  if not load
+local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer  
 
 --// V2 SOURCE //--  
