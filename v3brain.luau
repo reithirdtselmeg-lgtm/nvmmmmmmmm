@@ -5,6 +5,8 @@ if getgenv().VynixuEntitySpawnerV3 then
     return getgenv().VynixuEntitySpawnerV3
 end
 
+local Brain = {}
+
 --// Services //--
 
 local Players = game:GetService("Players")
@@ -22,9 +24,7 @@ local V2_URL =
 
 --// external asset system //--
 
-local ASSET_FOLDER =
-    "V3Entities"
-
+local ASSET_FOLDER = "V3Entities"
 local ASSET_CLEANUP_DELAY = 10
 
 local ExternalAssetFunctions = {
@@ -49,16 +49,10 @@ local function GetExtension(url, fallback)
         return fallback
     end
 
-    local cleanUrl =
-        url:match("^[^?#]+")
-        or url
+    local cleanUrl = url:match("^[^?#]+") or url
+    local extension = cleanUrl:match("%.([%w]+)$")
 
-    local extension =
-        cleanUrl:match("%.([%w]+)$")
-
-    if extension
-        and #extension <= 8 then
-
+    if extension and #extension <= 8 then
         return extension:lower()
     end
 
@@ -70,10 +64,9 @@ local function SafeIsFile(path)
         return false
     end
 
-    local ok, result =
-        pcall(function()
-            return isfile(path)
-        end)
+    local ok, result = pcall(function()
+        return isfile(path)
+    end)
 
     return ok and result == true
 end
@@ -95,21 +88,17 @@ local function EnsureAssetFolder()
         return true
     end
 
-    local ok =
-        pcall(function()
-            if not isfolder
-                or not isfolder(ASSET_FOLDER) then
-
-                makefolder(ASSET_FOLDER)
-            end
-        end)
+    local ok = pcall(function()
+        if not isfolder or not isfolder(ASSET_FOLDER) then
+            makefolder(ASSET_FOLDER)
+        end
+    end)
 
     return ok
 end
 
 local function GenerateAssetPath(url, extension)
-    local randomPart =
-        tostring(math.random(100000, 999999))
+    local randomPart = tostring(math.random(100000, 999999))
         .. "_"
         .. tostring(math.floor(os.clock() * 100000))
 
@@ -120,10 +109,7 @@ local function GenerateAssetPath(url, extension)
         .. extension
 end
 
-local function DownloadExternalAsset(
-    url,
-    fallbackExtension
-)
+local function DownloadExternalAsset(url, fallbackExtension)
     if not IsExternalUrl(url) then
         return url, nil
     end
@@ -132,95 +118,51 @@ local function DownloadExternalAsset(
         or not ExternalAssetFunctions.WriteFile
         or not ExternalAssetFunctions.GetCustomAsset then
 
-        warn(
-            "V3 Brain: external asset requires "
-            .. "HttpGet, writefile, and getcustomasset."
-        )
-
+        warn("V3 Brain: external asset requires HttpGet, writefile, and getcustomasset.")
         return nil, nil
     end
 
     if not EnsureAssetFolder() then
-        warn(
-            "V3 Brain: failed to prepare asset folder."
-        )
-
+        warn("V3 Brain: failed to prepare asset folder.")
         return nil, nil
     end
 
-    local ok, data =
-        pcall(function()
-            return game:HttpGet(url)
-        end)
+    local ok, data = pcall(function()
+        return game:HttpGet(url)
+    end)
 
-    if not ok
-        or typeof(data) ~= "string"
-        or #data == 0 then
-
-        warn(
-            "V3 Brain: failed to download external asset:\n"
-            .. tostring(url)
-        )
-
+    if not ok or typeof(data) ~= "string" or #data == 0 then
+        warn("V3 Brain: failed to download external asset:\n" .. tostring(url))
         return nil, nil
     end
 
-    local extension =
-        GetExtension(
-            url,
-            fallbackExtension
-        )
+    local extension = GetExtension(url, fallbackExtension)
+    local path = GenerateAssetPath(url, extension)
 
-    local path =
-        GenerateAssetPath(
-            url,
-            extension
-        )
-
-    local writeOk =
-        pcall(function()
-            writefile(path, data)
-        end)
+    local writeOk = pcall(function()
+        writefile(path, data)
+    end)
 
     if not writeOk then
-        warn(
-            "V3 Brain: failed to write external asset:\n"
-            .. path
-        )
-
+        warn("V3 Brain: failed to write external asset:\n" .. path)
         return nil, nil
     end
 
-    local customOk, customAsset =
-        pcall(function()
-            return getcustomasset(path)
-        end)
+    local customOk, customAsset = pcall(function()
+        return getcustomasset(path)
+    end)
 
-    if not customOk
-        or typeof(customAsset) ~= "string"
-        or customAsset == "" then
-
+    if not customOk or typeof(customAsset) ~= "string" or customAsset == "" then
         SafeDeleteFile(path)
-
-        warn(
-            "V3 Brain: getcustomasset failed:\n"
-            .. path
-        )
-
+        warn("V3 Brain: getcustomasset failed:\n" .. path)
         return nil, nil
     end
 
     return customAsset, path
 end
 
-local function ResolveAsset(
-    value,
-    fallbackExtension,
-    assetList
-)
-    if typeof(value) ~= "string"
-        or value == "" then
-
+local function ResolveAsset(value, fallbackExtension, assetList)
+    if typeof(value) ~= "string" or value == "" then
         return value
     end
 
@@ -228,17 +170,10 @@ local function ResolveAsset(
         return value
     end
 
-    local resolved, path =
-        DownloadExternalAsset(
-            value,
-            fallbackExtension
-        )
+    local resolved, path = DownloadExternalAsset(value, fallbackExtension)
 
     if path then
-        table.insert(
-            assetList,
-            path
-        )
+        table.insert(assetList, path)
     end
 
     return resolved
@@ -264,57 +199,32 @@ local function ResolveConfigAssets(config)
     local assetList = {}
 
     local function Image(value)
-        return ResolveAsset(
-            value,
-            "png",
-            assetList
-        )
+        return ResolveAsset(value, "png", assetList)
     end
 
     local function Sound(value)
-        return ResolveAsset(
-            value,
-            "ogg",
-            assetList
-        )
+        return ResolveAsset(value, "ogg", assetList)
     end
 
-    config.FaceId =
-        Image(config.FaceId)
+    config.FaceId = Image(config.FaceId)
 
     if typeof(config.Auras) == "table" then
         for i, auraData in ipairs(config.Auras) do
-            if i > 3 then
-                break
-            end
-
-            if typeof(auraData) == "table"
-                and auraData.Id then
-
-                auraData.Id =
-                    Image(auraData.Id)
+            if i > 3 then break end
+            if typeof(auraData) == "table" and auraData.Id then
+                auraData.Id = Image(auraData.Id)
             end
         end
     end
 
-    config.SpawnSound =
-        Sound(config.SpawnSound)
-
-    config.FarRushSound =
-        Sound(config.FarRushSound)
-
-    config.NearRushSound =
-        Sound(config.NearRushSound)
-
-    config.DespawnSound =
-        Sound(config.DespawnSound)
+    config.SpawnSound = Sound(config.SpawnSound)
+    config.FarRushSound = Sound(config.FarRushSound)
+    config.NearRushSound = Sound(config.NearRushSound)
+    config.DespawnSound = Sound(config.DespawnSound)
 
     if config.Jumpscare then
-        config.Jumpscare.Image =
-            Image(config.Jumpscare.Image)
-
-        config.Jumpscare.Sound =
-            Sound(config.Jumpscare.Sound)
+        config.Jumpscare.Image = Image(config.Jumpscare.Image)
+        config.Jumpscare.Sound = Sound(config.Jumpscare.Sound)
     end
 
     return assetList
@@ -323,38 +233,19 @@ end
 --// V3 MOVEMENT PATCH //--
 
 local function PatchV2Source(source)
-
-    local movementStart =
-        source:find(
-            "local function EntityMoveTo",
-            1,
-            true
-        )
-
-    local earthquakeStart =
-        source:find(
-            "local function Earthquake",
-            1,
-            true
-        )
+    local movementStart = source:find("local function EntityMoveTo", 1, true)
+    local earthquakeStart = source:find("local function Earthquake", 1, true)
 
     assert(
-        movementStart
-            and earthquakeStart
-            and earthquakeStart > movementStart,
+        movementStart and earthquakeStart and earthquakeStart > movementStart,
         "V3 Brain: failed to locate V2 EntityMoveTo."
     )
 
-    local gap =
-        earthquakeStart - movementStart
+    local gap = earthquakeStart - movementStart
 
     assert(
-        gap > 20
-            and gap < 5000,
-        "V3 Brain: unexpected gap ("
-            .. gap
-            .. ") chars between EntityMoveTo and Earthquake — "
-            .. "V2 source structure may have changed, refusing to splice."
+        gap > 20 and gap < 5000,
+        "V3 Brain: unexpected gap (" .. gap .. ") chars between EntityMoveTo and Earthquake — V2 source structure may have changed, refusing to splice."
     )
 
     local newMovement = [[
@@ -381,67 +272,34 @@ connection = RunService.Heartbeat:Connect(function(deltaTime)
     local currentPosition = pivot.Position
     local targetPosition = cframe.Position
 
-    local difference =
-        targetPosition - currentPosition
-
-    local distance =
-        difference.Magnitude
+    local difference = targetPosition - currentPosition
+    local distance = difference.Magnitude
 
     if distance <= 0.01 then
 
-        local rotationOnly =
-            pivot - pivot.Position
+        local rotationOnly = pivot - pivot.Position
 
         model:PivotTo(
-            CFrame.new(targetPosition)
-            * rotationOnly
+            CFrame.new(targetPosition) * rotationOnly
         )
 
         connection:Disconnect()
         reached = true
-
         return
     end
 
-    local direction =
-        difference / distance
-
-    local movement =
-        math.min(
-            speed * deltaTime,
-            distance
-        )
-
-    local newPosition =
-        currentPosition
-        + direction * movement
-
-    local flatDirection =
-        Vector3.new(
-            direction.X,
-            0,
-            direction.Z
-        )
+    local direction = difference / distance
+    local movement = math.min(speed * deltaTime, distance)
+    local newPosition = currentPosition + direction * movement
+    local flatDirection = Vector3.new(direction.X, 0, direction.Z)
 
     local newCFrame
 
     if flatDirection.Magnitude > 0.001 then
-
-        newCFrame =
-            CFrame.lookAt(
-                newPosition,
-                newPosition + flatDirection
-            )
-
+        newCFrame = CFrame.lookAt(newPosition, newPosition + flatDirection)
     else
-
-        local rotationOnly =
-            pivot - pivot.Position
-
-        newCFrame =
-            CFrame.new(newPosition)
-            * rotationOnly
-
+        local rotationOnly = pivot - pivot.Position
+        newCFrame = CFrame.new(newPosition) * rotationOnly
     end
 
     model:PivotTo(newCFrame)
@@ -456,27 +314,12 @@ end
 
 ]]
 
-    source =
-        source:sub(
-            1,
-            movementStart - 1
-        )
-        .. newMovement
-        .. source:sub(
-            earthquakeStart
-        )
+    source = source:sub(1, movementStart - 1) .. newMovement .. source:sub(earthquakeStart)
 
-    local patchedSource, matchCount =
-        source:gsub(
-            '"OnReachNode"',
-            '"OnReachedNode"'
-        )
+    local patchedSource, matchCount = source:gsub('"OnReachNode"', '"OnReachedNode"')
 
     if matchCount == 0 then
-        warn(
-            "V3 Brain: 'OnReachNode' -> "
-            .. "'OnReachedNode' patch matched 0 occurrences."
-        )
+        warn("V3 Brain: 'OnReachNode' -> 'OnReachedNode' patch matched 0 occurrences.")
     end
 
     return patchedSource
@@ -489,48 +332,31 @@ getgenv().VynixuEntitySpawnerV2 = nil
 local Original
 
 do
-    local ok, source =
-        pcall(function()
-            return game:HttpGet(V2_URL)
-        end)
+    local ok, source = pcall(function()
+        return game:HttpGet(V2_URL)
+    end)
 
-    if not ok
-        or typeof(source) ~= "string" then
-
-        error(
-            "V3 Brain: failed to download V2 source."
-        )
+    if not ok or typeof(source) ~= "string" then
+        error("V3 Brain: failed to download V2 source.")
     end
 
-    local patchOk, patchedSource =
-        pcall(function()
-            return PatchV2Source(source)
-        end)
+    local patchOk, patchedSource = pcall(function()
+        return PatchV2Source(source)
+    end)
 
     if not patchOk then
-        error(
-            "V3 Brain: failed to patch V2 movement:\n"
-            .. tostring(patchedSource)
-        )
+        error("V3 Brain: failed to patch V2 movement:\n" .. tostring(patchedSource))
     end
 
     --// compile V2 //--
 
-    local compileOk, V2Function =
-        pcall(function()
-
-            local fn, err =
-                loadstring(patchedSource)
-
-            if not fn then
-                error(
-                    "V3 Brain: patched V2 COMPILE ERROR:\n"
-                    .. tostring(err)
-                )
-            end
-
-            return fn
-        end)
+    local compileOk, V2Function = pcall(function()
+        local fn, err = loadstring(patchedSource)
+        if not fn then
+            error("V3 Brain: patched V2 COMPILE ERROR:\n" .. tostring(err))
+        end
+        return fn
+    end)
 
     if not compileOk then
         error(tostring(V2Function))
@@ -538,37 +364,24 @@ do
 
     --// execute V2 //--
 
-    local runOk, result =
-        pcall(function()
-            return V2Function()
-        end)
+    local runOk, result = pcall(function()
+        return V2Function()
+    end)
 
     if not runOk then
-        error(
-            "V3 Brain: patched V2 EXECUTION ERROR:\n"
-            .. tostring(result)
-        )
+        error("V3 Brain: patched V2 EXECUTION ERROR:\n" .. tostring(result))
     end
 
     if typeof(result) ~= "table" then
-        error(
-            "V3 Brain: patched V2 returned "
-            .. typeof(result)
-            .. " instead of a table."
-        )
+        error("V3 Brain: patched V2 returned " .. typeof(result) .. " instead of a table.")
     end
 
     if typeof(result.Create) ~= "function" then
-        error(
-            "V3 Brain: patched V2 loaded, "
-            .. "but Create is missing."
-        )
+        error("V3 Brain: patched V2 loaded, but Create is missing.")
     end
 
     Original = result
-
-    getgenv().VynixuEntitySpawnerV2 =
-        Original
+    getgenv().VynixuEntitySpawnerV2 = Original
 end
 
 --// colors //--
@@ -610,7 +423,6 @@ local function MixColors(color1, color2)
 end
 
 local function GetColor(value)
-
     if typeof(value) == "Color3" then
         return value
     end
@@ -623,28 +435,18 @@ local function GetColor(value)
         return AuraColors[value]
     end
 
-    local left, right =
-        value:match(
-            "^%s*(.-)%s*%+%s*(.-)%s*$"
-        )
+    local left, right = value:match("^%s*(.-)%s*%+%s*(.-)%s*$")
 
     if left and right then
-
         if string.find(right, "%+") then
             return Color3.new(1, 1, 1)
         end
 
-        local color1 =
-            AuraColors[left]
-
-        local color2 =
-            AuraColors[right]
+        local color1 = AuraColors[left]
+        local color2 = AuraColors[right]
 
         if color1 and color2 then
-            return MixColors(
-                color1,
-                color2
-            )
+            return MixColors(color1, color2)
         end
     end
 
@@ -671,11 +473,9 @@ end
 
 local function StopSound(sound)
     if sound then
-
         pcall(function()
             sound:Stop()
         end)
-
         SafeDestroy(sound)
     end
 end
@@ -684,87 +484,50 @@ local function StopAllActiveSounds()
     for sound, _ in pairs(ActiveSounds) do
         StopSound(sound)
     end
-
     table.clear(ActiveSounds)
 end
 
 local function FindFacePart(model)
-
     if not model then
         return nil
     end
 
-    return model:FindFirstChild(
-        "FacePart",
-        true
-    )
-    or model:FindFirstChild(
-        "Head",
-        true
-    )
-    or model.PrimaryPart
+    return model:FindFirstChild("FacePart", true)
+        or model:FindFirstChild("Head", true)
+        or model.PrimaryPart
 end
 
 --// make entity //--
 
 local function PrepareModel(config)
+    local model = Instance.new("Model")
+    model.Name = config.EntityName or "CustomEntity"
 
-    local model =
-        Instance.new("Model")
-
-    model.Name =
-        config.EntityName
-        or "CustomEntity"
-
-    local root =
-        Instance.new("Part")
-
+    local root = Instance.new("Part")
     root.Name = "Root"
-
-    root.Size =
-        Vector3.new(2, 2, 2)
-
+    root.Size = Vector3.new(2, 2, 2)
     root.Transparency = 1
     root.Anchored = true
     root.CanCollide = false
     root.CanTouch = false
     root.CanQuery = false
     root.CastShadow = false
-
     root.Parent = model
-
     model.PrimaryPart = root
 
-    local face =
-        Instance.new("Part")
-
+    local face = Instance.new("Part")
     face.Name = "FacePart"
-
-    face.Size =
-        Vector3.new(4, 4, 0.2)
-
+    face.Size = Vector3.new(4, 4, 0.2)
     face.Transparency = 1
     face.Anchored = false
     face.CanCollide = false
     face.CanTouch = false
     face.CanQuery = false
     face.CastShadow = false
-
-    face.CFrame =
-        root.CFrame
-        * CFrame.new(
-            0,
-            0,
-            -1.2
-        )
-
+    face.CFrame = root.CFrame * CFrame.new(0, 0, -1.2)
     face.Parent = model
 
-    local weld =
-        Instance.new(
-            "WeldConstraint"
-        )
-
+    local weld = Instance.new("WeldConstraint")
     weld.Part0 = root
     weld.Part1 = face
     weld.Parent = face
@@ -775,69 +538,29 @@ end
 --// face //--
 
 local function SetupFace(model, config)
+    local facePart = FindFacePart(model)
+    if not facePart then return end
 
-    local facePart =
-        FindFacePart(model)
+    local faceId = config.FaceId
+    if typeof(faceId) ~= "string" or faceId == "" then return end
 
-    if not facePart then
-        return
-    end
-
-    local faceId =
-        config.FaceId
-
-    if typeof(faceId) ~= "string"
-        or faceId == "" then
-
-        return
-    end
-
-    local attachment =
-        facePart:FindFirstChild(
-            "FaceAttachment"
-        )
-
+    local attachment = facePart:FindFirstChild("FaceAttachment")
     if not attachment then
-
-        attachment =
-            Instance.new(
-                "Attachment"
-            )
-
-        attachment.Name =
-            "FaceAttachment"
-
-        attachment.Parent =
-            facePart
+        attachment = Instance.new("Attachment")
+        attachment.Name = "FaceAttachment"
+        attachment.Parent = facePart
     end
 
-    local emitter =
-        attachment:FindFirstChild(
-            "FaceParticle"
-        )
-
+    local emitter = attachment:FindFirstChild("FaceParticle")
     if not emitter then
-
-        emitter =
-            Instance.new(
-                "ParticleEmitter"
-            )
-
-        emitter.Name =
-            "FaceParticle"
-
-        emitter.Parent =
-            attachment
+        emitter = Instance.new("ParticleEmitter")
+        emitter.Name = "FaceParticle"
+        emitter.Parent = attachment
     end
 
-    emitter.Texture =
-        faceId
+    emitter.Texture = faceId
 
-    for property, value in
-        pairs(
-            config.FaceParticle or {}
-        ) do
-
+    for property, value in pairs(config.FaceParticle or {}) do
         pcall(function()
             emitter[property] = value
         end)
@@ -847,109 +570,51 @@ end
 --// multi-aura //--
 
 local function SetupAura(model, config)
-
-    local root =
-        model.PrimaryPart
-
-    if not root
-        or typeof(config.Auras) ~= "table"
-        or #config.Auras == 0 then
-
+    local root = model.PrimaryPart
+    if not root or typeof(config.Auras) ~= "table" or #config.Auras == 0 then
         return
     end
 
-    local firstAura =
-        config.Auras[1]
-
-    if typeof(firstAura) ~= "table"
-        or typeof(firstAura.Id) ~= "string"
-        or firstAura.Id == "" then
-
-        warn(
-            "V3 Brain: Aura #1 must have a valid Id."
-        )
-
+    local firstAura = config.Auras[1]
+    if typeof(firstAura) ~= "table" or typeof(firstAura.Id) ~= "string" or firstAura.Id == "" then
+        warn("V3 Brain: Aura #1 must have a valid Id.")
         return
     end
 
     if firstAura.Color == nil then
-
-        warn(
-            "V3 Brain: Aura #1 MUST define the master Color."
-        )
-
+        warn("V3 Brain: Aura #1 MUST define the master Color.")
         return
     end
 
-    local masterColor =
-        GetColor(firstAura.Color)
-
-    local masterColorSequence =
-        ColorSequence.new(masterColor)
+    local masterColor = GetColor(firstAura.Color)
+    local masterColorSequence = ColorSequence.new(masterColor)
 
     for index = 1, math.min(#config.Auras, 3) do
+        local auraData = config.Auras[index]
+        if typeof(auraData) == "table" and typeof(auraData.Id) == "string" and auraData.Id ~= "" then
+            local attachmentName = "AuraAttachment" .. index
+            local particleName = "AuraParticle" .. index
 
-        local auraData =
-            config.Auras[index]
-
-        if typeof(auraData) == "table"
-            and typeof(auraData.Id) == "string"
-            and auraData.Id ~= "" then
-
-            local attachmentName =
-                "AuraAttachment" .. index
-
-            local particleName =
-                "AuraParticle" .. index
-
-            local attachment =
-                root:FindFirstChild(
-                    attachmentName
-                )
-
+            local attachment = root:FindFirstChild(attachmentName)
             if not attachment then
-
-                attachment =
-                    Instance.new("Attachment")
-
-                attachment.Name =
-                    attachmentName
-
-                attachment.Parent =
-                    root
+                attachment = Instance.new("Attachment")
+                attachment.Name = attachmentName
+                attachment.Parent = root
             end
 
-            local emitter =
-                attachment:FindFirstChild(
-                    particleName
-                )
-
+            local emitter = attachment:FindFirstChild(particleName)
             if not emitter then
-
-                emitter =
-                    Instance.new(
-                        "ParticleEmitter"
-                    )
-
-                emitter.Name =
-                    particleName
-
-                emitter.Parent =
-                    attachment
+                emitter = Instance.new("ParticleEmitter")
+                emitter.Name = particleName
+                emitter.Parent = attachment
             end
 
-            emitter.Texture =
-                auraData.Id
+            emitter.Texture = auraData.Id
+            emitter.Color = masterColorSequence
 
-            emitter.Color =
-                masterColorSequence
-
-            for property, value in
-                pairs(auraData.Settings or {}) do
-
+            for property, value in pairs(auraData.Settings or {}) do
                 pcall(function()
-                    emitter[property] =
-                        value
+                    emitter[property] = value
                 end)
             end
         end
@@ -958,46 +623,24 @@ end
 
 --// entity lamp //--
 
-local function SetupLight(
-    model,
-    data,
-    name
-)
+local function SetupLight(model, data, name)
+    local root = model.PrimaryPart
+    if not root then return end
 
-    local root =
-        model.PrimaryPart
-
-    if not root then
-        return
-    end
-
-    local oldLight =
-        root:FindFirstChild(name)
-
+    local oldLight = root:FindFirstChild(name)
     if oldLight then
         SafeDestroy(oldLight)
     end
 
-    if not data
-        or not data.Enabled then
-
+    if not data or not data.Enabled then
         return
     end
 
-    local light =
-        Instance.new("PointLight")
-
+    local light = Instance.new("PointLight")
     light.Name = name
-
-    light.Color =
-        GetColor(data.Color)
-
-    light.Range =
-        data.Range or 30
-
-    light.Brightness =
-        data.Brightness or 2
-
+    light.Color = GetColor(data.Color)
+    light.Range = data.Range or 30
+    light.Brightness = data.Brightness or 2
     light.Enabled = true
     light.Parent = root
 
@@ -1007,199 +650,90 @@ end
 --// environment //--
 
 local function SetupEnvironment(config)
-
     if EnvironmentEffect then
-
-        SafeDestroy(
-            EnvironmentEffect
-        )
-
+        SafeDestroy(EnvironmentEffect)
         EnvironmentEffect = nil
     end
 
-    local data =
-        config.EnvironmentColor
+    local data = config.EnvironmentColor
+    if not data or not data.Enabled then return end
 
-    if not data
-        or not data.Enabled then
+    local effect = Instance.new("ColorCorrectionEffect")
+    effect.Name = "V3EntityEnvironmentColor"
 
-        return
-    end
+    local targetColor = GetColor(data.Color)
+    local strength = math.clamp(tonumber(data.Strength) or 45, 0, 100) / 100
 
-    local effect =
-        Instance.new(
-            "ColorCorrectionEffect"
-        )
+    local targetTint = Color3.new(
+        1 + (targetColor.R - 1) * strength,
+        1 + (targetColor.G - 1) * strength,
+        1 + (targetColor.B - 1) * strength
+    )
 
-    effect.Name =
-        "V3EntityEnvironmentColor"
-
-    local targetColor =
-        GetColor(data.Color)
-
-    local strength =
-        math.clamp(
-            tonumber(data.Strength)
-                or 45,
-            0,
-            100
-        ) / 100
-
-    local targetTint =
-        Color3.new(
-            1
-                + (targetColor.R - 1)
-                * strength,
-
-            1
-                + (targetColor.G - 1)
-                * strength,
-
-            1
-                + (targetColor.B - 1)
-                * strength
-        )
-
-    effect.TintColor =
-        Color3.new(1, 1, 1)
-
+    effect.TintColor = Color3.new(1, 1, 1)
     effect.Brightness = 0
     effect.Contrast = 0
     effect.Saturation = 0
-
     effect.Parent = Lighting
 
-    EnvironmentEffect =
-        effect
+    EnvironmentEffect = effect
 
-    local fadeIn =
-        math.max(
-            tonumber(data.FadeIn)
-                or 0.5,
-            0
-        )
-
-    local tween =
-        TweenService:Create(
-            effect,
-
-            TweenInfo.new(
-                fadeIn,
-                Enum.EasingStyle.Quad,
-                Enum.EasingDirection.Out
-            ),
-
-            {
-                TintColor = targetTint,
-
-                Brightness =
-                    strength * 0.15,
-
-                Contrast =
-                    strength * 0.25,
-
-                Saturation =
-                    strength * 0.1
-            }
-        )
+    local fadeIn = math.max(tonumber(data.FadeIn) or 0.5, 0)
+    local tween = TweenService:Create(
+        effect,
+        TweenInfo.new(fadeIn, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+        {
+            TintColor = targetTint,
+            Brightness = strength * 0.15,
+            Contrast = strength * 0.25,
+            Saturation = strength * 0.1
+        }
+    )
 
     tween:Play()
 end
 
 local function RemoveEnvironment(config)
-
-    local effect =
-        EnvironmentEffect
-
-    if not effect then
-        return
-    end
+    local effect = EnvironmentEffect
+    if not effect then return end
 
     EnvironmentEffect = nil
 
-    local data =
-        config.EnvironmentColor
-        or {}
+    local data = config.EnvironmentColor or {}
+    local fadeOut = math.max(tonumber(data.FadeOut) or 0.5, 0)
 
-    local fadeOut =
-        math.max(
-            tonumber(data.FadeOut)
-                or 0.5,
-            0
-        )
-
-    local tween =
-        TweenService:Create(
-            effect,
-
-            TweenInfo.new(
-                fadeOut,
-                Enum.EasingStyle.Quad,
-                Enum.EasingDirection.Out
-            ),
-
-            {
-                TintColor =
-                    Color3.new(
-                        1,
-                        1,
-                        1
-                    ),
-
-                Brightness = 0,
-                Contrast = 0,
-                Saturation = 0
-            }
-        )
+    local tween = TweenService:Create(
+        effect,
+        TweenInfo.new(fadeOut, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+        {
+            TintColor = Color3.new(1, 1, 1),
+            Brightness = 0,
+            Contrast = 0,
+            Saturation = 0
+        }
+    )
 
     tween:Play()
 
-    task.delay(
-        fadeOut,
-        function()
-            SafeDestroy(effect)
-        end
-    )
+    task.delay(fadeOut, function()
+        SafeDestroy(effect)
+    end)
 end
 
 --// sounds //--
 
-local function CreateSound(
-    parent,
-    soundId,
-    volume,
-    playbackSpeed,
-    name,
-    looped
-)
-
-    if not parent
-        or typeof(soundId) ~= "string"
-        or soundId == "" then
-
+local function CreateSound(parent, soundId, volume, playbackSpeed, name, looped)
+    if not parent or typeof(soundId) ~= "string" or soundId == "" then
         return nil
     end
 
-    local sound =
-        Instance.new("Sound")
-
-    sound.Name =
-        name or "V3Sound"
-
-    sound.SoundId =
-        soundId
-
-    sound.Volume =
-        volume or 1
-
-    sound.Looped =
-        looped == true
-
-    sound.PlaybackSpeed =
-        playbackSpeed or 1
-
-    sound.Parent =
-        parent
+    local sound = Instance.new("Sound")
+    sound.Name = name or "V3Sound"
+    sound.SoundId = soundId
+    sound.Volume = volume or 1
+    sound.Looped = looped == true
+    sound.PlaybackSpeed = playbackSpeed or 1
+    sound.Parent = parent
 
     return sound
 end
@@ -1207,144 +741,78 @@ end
 --// spawn sound //--
 
 local function PlaySpawnSound(config)
+    local playerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    if not playerGui then return end
 
-    local playerGui =
-        LocalPlayer:FindFirstChildOfClass(
-            "PlayerGui"
-        )
+    local sound = CreateSound(
+        playerGui,
+        config.SpawnSound,
+        config.SpawnVolume,
+        config.SpawnPlaybackSpeed,
+        "V3SpawnSound",
+        false
+    )
 
-    if not playerGui then
-        return
-    end
-
-    local sound =
-        CreateSound(
-            playerGui,
-            config.SpawnSound,
-            config.SpawnVolume,
-            config.SpawnPlaybackSpeed,
-            "V3SpawnSound",
-            false
-        )
-
-    if not sound then
-        return
-    end
+    if not sound then return end
 
     sound:Play()
 
-    task.delay(
-        config.SpawnSoundTimeout
-            or 5,
-
-        function()
-            SafeDestroy(sound)
-        end
-    )
+    task.delay(config.SpawnSoundTimeout or 5, function()
+        SafeDestroy(sound)
+    end)
 end
 
 --// rush sounds //--
 
-local function PlayRushSound(
-    model,
-    soundId,
-    volume,
-    playbackSpeed,
-    name
-)
+local function PlayRushSound(model, soundId, volume, playbackSpeed, name)
+    if not model then return end
 
-    if not model then
-        return
-    end
+    local facePart = model:FindFirstChild("FacePart", true)
+    if not facePart then return end
 
-    local facePart =
-        model:FindFirstChild(
-            "FacePart",
-            true
-        )
+    local sound = CreateSound(
+        facePart,
+        soundId,
+        volume,
+        playbackSpeed,
+        name,
+        true
+    )
 
-    if not facePart then
-        return
-    end
+    if not sound then return end
 
-    local sound =
-        CreateSound(
-            facePart,
-            soundId,
-            volume,
-            playbackSpeed,
-            name,
-            true
-        )
-
-    if not sound then
-        return
-    end
-
-    sound.RollOffMode =
-        Enum.RollOffMode.InverseTapered
-
+    sound.RollOffMode = Enum.RollOffMode.InverseTapered
     sound.RollOffMinDistance = 5
     sound.RollOffMaxDistance = 165
 
     ActiveSounds[sound] = true
-
     sound:Play()
 end
 
 local function FadeOutActiveSounds(duration)
-
-    duration =
-        math.max(
-            tonumber(duration)
-                or 3,
-            0
-        )
+    duration = math.max(tonumber(duration) or 3, 0)
 
     local soundsToFade = {}
 
-    for sound, _ in
-        pairs(ActiveSounds) do
-
-        table.insert(
-            soundsToFade,
-            sound
-        )
+    for sound, _ in pairs(ActiveSounds) do
+        table.insert(soundsToFade, sound)
     end
 
-    table.clear(
-        ActiveSounds
-    )
+    table.clear(ActiveSounds)
 
-    for _, sound in
-        ipairs(soundsToFade) do
-
-        if sound
-            and sound.Parent then
-
-            local tween =
-                TweenService:Create(
-                    sound,
-
-                    TweenInfo.new(
-                        duration,
-                        Enum.EasingStyle.Linear,
-                        Enum.EasingDirection.Out
-                    ),
-
-                    {
-                        Volume = 0
-                    }
-                )
+    for _, sound in ipairs(soundsToFade) do
+        if sound and sound.Parent then
+            local tween = TweenService:Create(
+                sound,
+                TweenInfo.new(duration, Enum.EasingStyle.Linear, Enum.EasingDirection.Out),
+                { Volume = 0 }
+            )
 
             tween:Play()
 
-            task.delay(
-                duration,
-                function()
-                    SafeDestroy(sound)
-                end
-            )
+            task.delay(duration, function()
+                SafeDestroy(sound)
+            end)
         end
     end
 end
@@ -1352,158 +820,76 @@ end
 --// despawn sound //--
 
 local function PlayDespawnSound(config)
+    local playerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    if not playerGui then return end
 
-    local playerGui =
-        LocalPlayer:FindFirstChildOfClass(
-            "PlayerGui"
-        )
+    local sound = CreateSound(
+        playerGui,
+        config.DespawnSound,
+        config.DespawnVolume,
+        config.DespawnPlaybackSpeed,
+        "V3DespawnSound",
+        false
+    )
 
-    if not playerGui then
-        return
-    end
-
-    local sound =
-        CreateSound(
-            playerGui,
-            config.DespawnSound,
-            config.DespawnVolume,
-            config.DespawnPlaybackSpeed,
-            "V3DespawnSound",
-            false
-        )
-
-    if not sound then
-        return
-    end
+    if not sound then return end
 
     sound:Play()
 
-    task.delay(
-        config.DespawnSoundTimeout
-            or 5,
-
-        function()
-            SafeDestroy(sound)
-        end
-    )
+    task.delay(config.DespawnSoundTimeout or 5, function()
+        SafeDestroy(sound)
+    end)
 end
 
 --// preload //--
 
 local function Preload(config)
-
     local assets = {}
 
-    local function AddAsset(
-        id,
-        className
-    )
+    local function AddAsset(id, className)
+        if typeof(id) ~= "string" or id == "" then return end
 
-        if typeof(id) ~= "string"
-            or id == "" then
+        local asset = Instance.new(className)
+        asset.Name = "V3Preload"
 
-            return
-        end
-
-        local asset =
-            Instance.new(className)
-
-        asset.Name =
-            "V3Preload"
-
-        if asset:IsA(
-            "ImageLabel"
-        ) then
-
+        if asset:IsA("ImageLabel") then
             asset.Image = id
-
-        elseif asset:IsA(
-            "Sound"
-        ) then
-
+        elseif asset:IsA("Sound") then
             asset.SoundId = id
         end
 
-        asset.Parent =
-            game:GetService(
-                "CoreGui"
-            )
-
-        table.insert(
-            assets,
-            asset
-        )
+        asset.Parent = game:GetService("CoreGui")
+        table.insert(assets, asset)
     end
 
-    AddAsset(
-        config.FaceId,
-        "ImageLabel"
-    )
+    AddAsset(config.FaceId, "ImageLabel")
 
     if typeof(config.Auras) == "table" then
-
-        for i, auraData in
-            ipairs(config.Auras) do
-
-            if i > 3 then
-                break
-            end
-
+        for i, auraData in ipairs(config.Auras) do
+            if i > 3 then break end
             if typeof(auraData) == "table" then
-
-                AddAsset(
-                    auraData.Id,
-                    "ImageLabel"
-                )
+                AddAsset(auraData.Id, "ImageLabel")
             end
         end
     end
 
-    AddAsset(
-        config.SpawnSound,
-        "Sound"
-    )
-
-    AddAsset(
-        config.FarRushSound,
-        "Sound"
-    )
-
-    AddAsset(
-        config.NearRushSound,
-        "Sound"
-    )
-
-    AddAsset(
-        config.DespawnSound,
-        "Sound"
-    )
+    AddAsset(config.SpawnSound, "Sound")
+    AddAsset(config.FarRushSound, "Sound")
+    AddAsset(config.NearRushSound, "Sound")
+    AddAsset(config.DespawnSound, "Sound")
 
     if config.Jumpscare then
-
-        AddAsset(
-            config.Jumpscare.Image,
-            "ImageLabel"
-        )
-
-        AddAsset(
-            config.Jumpscare.Sound,
-            "Sound"
-        )
+        AddAsset(config.Jumpscare.Image, "ImageLabel")
+        AddAsset(config.Jumpscare.Sound, "Sound")
     end
 
     if #assets > 0 then
-
         pcall(function()
-            ContentProvider:PreloadAsync(
-                assets
-            )
+            ContentProvider:PreloadAsync(assets)
         end)
     end
 
-    for _, asset in
-        ipairs(assets) do
-
+    for _, asset in ipairs(assets) do
         SafeDestroy(asset)
     end
 end
@@ -1511,138 +897,56 @@ end
 --// jumpscare //--
 
 local function RunJumpscare(config)
+    local data = config.Jumpscare
+    if not data or not data.Enabled then return end
 
-    local data =
-        config.Jumpscare
+    local playerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    if not playerGui then return end
 
-    if not data
-        or not data.Enabled then
-
-        return
-    end
-
-    local playerGui =
-        LocalPlayer:FindFirstChildOfClass(
-            "PlayerGui"
-        )
-
-    if not playerGui then
-        return
-    end
-
-    local gui =
-        Instance.new(
-            "ScreenGui"
-        )
-
-    gui.Name =
-        "V3EntityJumpscare"
-
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "V3EntityJumpscare"
     gui.IgnoreGuiInset = true
     gui.ResetOnSpawn = false
     gui.DisplayOrder = 999999
-
-    gui.Parent =
-        playerGui
+    gui.Parent = playerGui
 
     --// FLASH //--
 
-    local flash =
-        Instance.new("Frame")
-
-    flash.Name =
-        "Flash"
-
-    flash.Size =
-        UDim2.fromScale(
-            4,
-            4
-        )
-
-    flash.BackgroundColor3 =
-        GetColor(
-            data.FlashColor
-        )
-
+    local flash = Instance.new("Frame")
+    flash.Name = "Flash"
+    flash.Size = UDim2.fromScale(4, 4)
+    flash.BackgroundColor3 = GetColor(data.FlashColor)
     flash.BackgroundTransparency = 0
     flash.BorderSizePixel = 0
-
     flash.Parent = gui
 
     --// FACE //--
 
-    local image =
-        Instance.new(
-            "ImageLabel"
-        )
-
+    local image = Instance.new("ImageLabel")
     image.Name = "Face"
-
-    image.AnchorPoint =
-        Vector2.new(
-            0.5,
-            0.5
-        )
-
-    image.Position =
-        UDim2.fromScale(
-            0.5,
-            0.5
-        )
-
+    image.AnchorPoint = Vector2.new(0.5, 0.5)
+    image.Position = UDim2.fromScale(0.5, 0.5)
     image.BackgroundTransparency = 1
+    image.ScaleType = Enum.ScaleType.Fit
 
-    image.ScaleType =
-        Enum.ScaleType.Fit
-
-    local startSize =
-        data.StartSize
-        or 0.2
-
-    image.Size =
-        UDim2.fromScale(
-            startSize,
-            startSize
-        )
-
-    image.Image =
-        data.Image
-        or config.FaceId
-
-    image.Parent =
-        gui
+    local startSize = data.StartSize or 0.2
+    image.Size = UDim2.fromScale(startSize, startSize)
+    image.Image = data.Image or config.FaceId
+    image.Parent = gui
 
     --// SOUND //--
 
     local sound
-
-    if typeof(data.Sound)
-        == "string"
-        and data.Sound ~= "" then
-
-        sound =
-            Instance.new("Sound")
-
-        sound.Name =
-            "JumpscareSound"
-
-        sound.SoundId =
-            data.Sound
-
-        sound.Volume =
-            data.Volume
-            or 1
-
+    if typeof(data.Sound) == "string" and data.Sound ~= "" then
+        sound = Instance.new("Sound")
+        sound.Name = "JumpscareSound"
+        sound.SoundId = data.Sound
+        sound.Volume = data.Volume or 1
         sound.Looped = false
         sound.Parent = gui
 
         if data.PitchShiftEnabled then
-
-            local pitch =
-                Instance.new(
-                    "PitchShiftSoundEffect"
-                )
-
+            local pitch = Instance.new("PitchShiftSoundEffect")
             pitch.Octave = 1
             pitch.Parent = sound
         end
@@ -1650,159 +954,65 @@ local function RunJumpscare(config)
         sound:Play()
     end
 
-    local duration =
-        math.max(
-            data.Duration
-                or 0.6,
-            0.05
-        )
+    local duration = math.max(data.Duration or 0.6, 0.05)
 
     --// FLASH //--
 
     if data.FlashEnabled then
+        local flashColor = GetColor(data.FlashColor)
+        local black = Color3.new(0, 0, 0)
 
-        local flashColor =
-            GetColor(
-                data.FlashColor
-            )
-
-        local black =
-            Color3.new(
-                0,
-                0,
-                0
-            )
-
-        flash.BackgroundColor3 =
-            flashColor
-
+        flash.BackgroundColor3 = flashColor
         flash.BackgroundTransparency = 0
 
         task.spawn(function()
-
-            local flashSpeed =
-                math.max(
-                    data.FlashSpeed
-                        or 0.1,
-                    0.01
-                )
-
-            local startTime =
-                os.clock()
-
+            local flashSpeed = math.max(data.FlashSpeed or 0.1, 0.01)
+            local startTime = os.clock()
             local useColor = false
 
             while gui.Parent do
+                local elapsed = os.clock() - startTime
+                if elapsed >= duration then break end
 
-                local elapsed =
-                    os.clock()
-                    - startTime
-
-                if elapsed >= duration then
-                    break
-                end
-
-                useColor =
-                    not useColor
-
-                local targetColor
-
-                if useColor then
-                    targetColor =
-                        flashColor
-                else
-                    targetColor =
-                        black
-                end
-
-                flash.BackgroundColor3 =
-                    targetColor
-
+                useColor = not useColor
+                flash.BackgroundColor3 = useColor and flashColor or black
                 flash.BackgroundTransparency = 0
 
-                task.wait(
-                    flashSpeed
-                )
+                task.wait(flashSpeed)
             end
         end)
-
     else
-
         flash.BackgroundTransparency = 1
-
     end
 
     --// FACE GROW //--
 
-    local wiggleAngle =
-        data.WiggleAngle
-        or 15
+    local wiggleAngle = data.WiggleAngle or 15
 
     TweenService:Create(
         image,
-
-        TweenInfo.new(
-            duration,
-            Enum.EasingStyle.Exponential,
-            Enum.EasingDirection.Out
-        ),
-
-        {
-            Size =
-                UDim2.fromScale(
-                    1,
-                    1
-                )
-        }
+        TweenInfo.new(duration, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out),
+        { Size = UDim2.fromScale(1, 1) }
     ):Play()
 
     --// WIGGLE //--
 
     task.spawn(function()
-
-        local startTime =
-            os.clock()
-
+        local startTime = os.clock()
         local direction = 1
 
         while gui.Parent do
+            local elapsed = os.clock() - startTime
+            local alpha = math.clamp(elapsed / duration, 0, 1)
+            if alpha >= 1 then break end
 
-            local elapsed =
-                os.clock()
-                - startTime
+            local fade = 1 - alpha
+            local angle = wiggleAngle * fade * direction
+            image.Rotation = angle
 
-            local alpha =
-                math.clamp(
-                    elapsed / duration,
-                    0,
-                    1
-                )
-
-            if alpha >= 1 then
-                break
-            end
-
-            local fade =
-                1 - alpha
-
-            local angle =
-                wiggleAngle
-                * fade
-                * direction
-
-            image.Rotation =
-                angle
-
-            local waitTime =
-                0.025
-                + alpha * 0.08
-
-            task.wait(
-                waitTime
-            )
-
-            direction =
-                -direction
+            local waitTime = 0.025 + alpha * 0.08
+            task.wait(waitTime)
+            direction = -direction
         end
 
         if image.Parent then
@@ -1811,537 +1021,229 @@ local function RunJumpscare(config)
     end)
 
     task.wait(duration)
-
     SafeDestroy(gui)
 end
 
 --// V3 → V2 config //--
 
-local function BuildV2Config(
-    config,
-    model
-)
-
+local function BuildV2Config(config, model)
     return {
-
         Entity = {
-
-            Name =
-                config.EntityName
-                or "CustomEntity",
-
-            Asset =
-                model,
-
-            HeightOffset =
-                config.HeightOffset
-                or 0
+            Name = config.EntityName or "CustomEntity",
+            Asset = model,
+            HeightOffset = config.HeightOffset or 0
         },
-
         Movement = {
-
-            Speed =
-                config.Movement.Speed,
-
-            Delay =
-                config.Movement.Delay,
-
-            Reversed =
-                config.Movement.Reversed,
-
-            FollowPlayer =
-                config.Movement.FollowPlayer == true,
-
-            FollowPlayerDespawnTime =
-                config.Movement.FollowPlayerDespawnTime
+            Speed = config.Movement and config.Movement.Speed or 100,
+            Delay = config.Movement and config.Movement.Delay or 0,
+            Reversed = config.Movement and config.Movement.Reversed or false,
+            FollowPlayer = config.Movement and config.Movement.FollowPlayer == true,
+            FollowPlayerDespawnTime = config.Movement and config.Movement.FollowPlayerDespawnTime or 0
         },
-
         Damage = {
-
-            Enabled =
-                config.Damage.Enabled,
-
-            IgnoreHiding =
-                config.Damage.IgnoreHiding,
-
-            Range =
-                config.Damage.Range,
-
-            Amount =
-                config.Damage.Amount
+            Enabled = config.Damage and config.Damage.Enabled or false,
+            IgnoreHiding = config.Damage and config.Damage.IgnoreHiding or false,
+            Range = config.Damage and config.Damage.Range or 10,
+            Amount = config.Damage and config.Damage.Amount or 100
         },
-
         Lights = {
-
             Flicker = {
-
-                Enabled =
-                    config.Lights.Flicker.Enabled,
-
-                Duration =
-                    config.Lights.Flicker.Duration
+                Enabled = config.Lights and config.Lights.Flicker and config.Lights.Flicker.Enabled or false,
+                Duration = config.Lights and config.Lights.Flicker and config.Lights.Flicker.Duration or 1
             },
-
-            Shatter =
-                config.Lights.Shatter,
-
-            Repair =
-                config.Lights.Repair
+            Shatter = config.Lights and config.Lights.Shatter or false,
+            Repair = config.Lights and config.Lights.Repair or false
         },
-
         Earthquake = {
-
-            Enabled =
-                config.Earthquake.Enabled
+            Enabled = config.Earthquake and config.Earthquake.Enabled or false
         },
-
         CameraShake = {
-
-            Enabled =
-                config.CameraShake.Enabled,
-
-            Range =
-                config.CameraShake.Range,
-
-            Values =
-                config.CameraShake.Values
+            Enabled = config.CameraShake and config.CameraShake.Enabled or false,
+            Range = config.CameraShake and config.CameraShake.Range or 100,
+            Values = config.CameraShake and config.CameraShake.Values or {1.5, 20, 0.1, 1}
         },
-
         Crucifixion = {
-
-            Type =
-                config.Crucifixion.Type,
-
-            Enabled =
-                config.Crucifixion.Enabled,
-
-            Range =
-                config.Crucifixion.Range,
-
-            Resist =
-                config.Crucifixion.Resist,
-
-            Break =
-                config.Crucifixion.Break
+            Type = config.Crucifixion and config.Crucifixion.Type or "Custom",
+            Enabled = config.Crucifixion and config.Crucifixion.Enabled or false,
+            Range = config.Crucifixion and config.Crucifixion.Range or 15,
+            Resist = config.Crucifixion and config.Crucifixion.Resist or false,
+            Break = config.Crucifixion and config.Crucifixion.Break or false
         },
-
         Rebounding = {
-
-            Enabled =
-                config.Rebounding.Enabled,
-
-            Type =
-                config.Rebounding.Type,
-
-            Min =
-                config.Rebounding.Min,
-
-            Max =
-                config.Rebounding.Max,
-
-            Delay =
-                config.Rebounding.Delay
+            Enabled = config.Rebounding and config.Rebounding.Enabled or false,
+            Type = config.Rebounding and config.Rebounding.Type or "Normal",
+            Min = config.Rebounding and config.Rebounding.Min or 1,
+            Max = config.Rebounding and config.Rebounding.Max or 1,
+            Delay = config.Rebounding and config.Rebounding.Delay or 2
         },
-
         Death = {
-
-            Type =
-                config.Death.Type,
-
-            Hints =
-                config.Death.Hints,
-
-            Cause =
-                config.Death.Cause
+            Type = config.Death and config.Death.Type or "Guiding",
+            Hints = config.Death and config.Death.Hints or {},
+            Cause = config.Death and config.Death.Cause or "An entity killed you."
         }
     }
 end
 
 --// callbacks //--
 
-local function SetupCallbacks(
-    entity,
-    config,
-    assetList,
-    spawnState
-)
+local function SetupCallbacks(entity, config, assetList, spawnState)
+    entity:SetCallback("OnSpawned", function()
+        spawnState.Time = os.clock()
+        EntityActive = true
+        CurrentEntity = entity
 
-    entity:SetCallback(
-        "OnSpawned",
-        function()
+        local model = entity.Model
+        if not model then return end
 
-            --// REAL ENTITY SPAWN TIME //--
+        SetupFace(model, config)
+        SetupAura(model, config)
+        SetupLight(model, config.EntityLight, "EntityLight")
+        SetupLight(model, config.EntityLamp2, "EntityLamp2")
+        SetupEnvironment(config)
+        PlaySpawnSound(config)
+    end)
 
-            spawnState.Time =
-                os.clock()
+    entity:SetCallback("OnStartMoving", function()
+        local model = entity.Model
+        if not model then return end
 
-            EntityActive = true
-            CurrentEntity = entity
+        PlayRushSound(
+            model,
+            config.FarRushSound,
+            config.FarVolume,
+            config.FarPlaybackSpeed,
+            "FarRush"
+        )
+    end)
 
-            local model =
-                entity.Model
+    entity:SetCallback("OnReachedNode", function(...)
+        if not EntityActive then return end
+    end)
 
-            if not model then
-                return
-            end
+    entity:SetCallback("OnEnterRoom", function(room, firstTime)
+        if not EntityActive then return end
 
-            SetupFace(
-                model,
-                config
-            )
+        local model = entity.Model
+        if not model then return end
 
-            SetupAura(
-                model,
-                config
-            )
-
-            SetupLight(
-                model,
-                config.EntityLight,
-                "EntityLight"
-            )
-
-            SetupLight(
-                model,
-                config.EntityLamp2,
-                "EntityLamp2"
-            )
-
-            SetupEnvironment(
-                config
-            )
-
-            PlaySpawnSound(
-                config
-            )
-        end
-    )
-
-    entity:SetCallback(
-        "OnStartMoving",
-        function()
-
-            local model =
-                entity.Model
-
-            if not model then
-                return
-            end
-
+        if firstTime then
             PlayRushSound(
                 model,
-                config.FarRushSound,
-                config.FarVolume,
-                config.FarPlaybackSpeed,
-                "FarRush"
+                config.NearRushSound,
+                config.NearVolume,
+                config.NearPlaybackSpeed,
+                "NearRush"
             )
         end
-    )
+    end)
 
-    entity:SetCallback(
-        "OnReachedNode",
-        function(...)
+    entity:SetCallback("OnLookAt", function(...)
+        if not EntityActive then return end
+    end)
 
-            if not EntityActive then
-                return
-            end
+    entity:SetCallback("OnRebounding", function(...)
+        if not EntityActive then return end
+    end)
+
+    entity:SetCallback("OnDespawning", function()
+        FadeOutActiveSounds(0.9)
+        RemoveEnvironment(config)
+    end)
+
+    entity:SetCallback("OnDespawned", function()
+        EntityActive = false
+
+        if CurrentEntity == entity then
+            CurrentEntity = nil
         end
-    )
 
-    entity:SetCallback(
-        "OnEnterRoom",
-        function(
-            room,
-            firstTime
-        )
+        RemoveEnvironment(config)
+        PlayDespawnSound(config)
 
-            if not EntityActive then
-                return
-            end
+        local ownedAssets = assetList
+        task.delay(ASSET_CLEANUP_DELAY, function()
+            CleanupAssetFiles(ownedAssets)
+        end)
+    end)
 
-            local model =
-                entity.Model
+    entity:SetCallback("OnDamagePlayer", function(newHealth)
+        if not EntityActive then return end
 
-            if not model then
-                return
-            end
-
-            if firstTime then
-
-                PlayRushSound(
-                    model,
-                    config.NearRushSound,
-                    config.NearVolume,
-                    config.NearPlaybackSpeed,
-                    "NearRush"
-                )
-            end
+        if config.Jumpscare and config.Jumpscare.Enabled then
+            task.spawn(function()
+                RunJumpscare(config)
+            end)
         end
-    )
-
-    entity:SetCallback(
-        "OnLookAt",
-        function(...)
-
-            if not EntityActive then
-                return
-            end
-        end
-    )
-
-    entity:SetCallback(
-        "OnRebounding",
-        function(...)
-
-            if not EntityActive then
-                return
-            end
-        end
-    )
-
-    entity:SetCallback(
-        "OnDespawning",
-        function()
-
-            FadeOutActiveSounds(
-                0.9
-            )
-
-            RemoveEnvironment(
-                config
-            )
-        end
-    )
-
-    entity:SetCallback(
-        "OnDespawned",
-        function()
-
-            EntityActive = false
-
-            if CurrentEntity == entity then
-                CurrentEntity = nil
-            end
-
-            RemoveEnvironment(
-                config
-            )
-
-            PlayDespawnSound(
-                config
-            )
-
-            local ownedAssets =
-                assetList
-
-            task.delay(
-                ASSET_CLEANUP_DELAY,
-                function()
-
-                    CleanupAssetFiles(
-                        ownedAssets
-                    )
-                end
-            )
-        end
-    )
-
-    entity:SetCallback(
-        "OnDamagePlayer",
-        function(newHealth)
-
-            if not EntityActive then
-                return
-            end
-
-            if config.Jumpscare
-                and config.Jumpscare.Enabled then
-
-                task.spawn(function()
-
-                    RunJumpscare(
-                        config
-                    )
-                end)
-            end
-        end
-    )
+    end)
 end
 
 --// V3 FOLLOW PLAYER / NODE HYBRID //--
---// V3 OWNS THIS ENTIRE MOVEMENT SYSTEM //--
---// V2 IS NOT MODIFIED FOR THIS //--
 
-local function StartHybridMovement(
-    entity,
-    config,
-    spawnTime
-)
-
-    if not config.Movement
-        or config.Movement.FollowPlayer ~= true then
-
+local function StartHybridMovement(entity, config, spawnTime)
+    if not config.Movement or config.Movement.FollowPlayer ~= true then
         return
     end
 
-    local model =
-        entity.Model
-        or entity.model
-
+    local model = entity.Model or entity.model
     if not model then
-
-        warn(
-            "V3 HybridMovement: entity model missing"
-        )
-
+        warn("V3 HybridMovement: entity model missing")
         return
     end
 
-    local CurrentRooms =
-        workspace:FindFirstChild(
-            "CurrentRooms"
-        )
-
+    local CurrentRooms = workspace:FindFirstChild("CurrentRooms")
     if not CurrentRooms then
-
-        warn(
-            "V3 HybridMovement: CurrentRooms missing"
-        )
-
+        warn("V3 HybridMovement: CurrentRooms missing")
         return
     end
 
-    local player =
-        Players.LocalPlayer
+    local player = Players.LocalPlayer
 
     --// SETTINGS //--
 
-    local speed =
-        tonumber(
-            config.Movement.Speed
-        )
-        or 100
-
-    local despawnTime =
-        tonumber(
-            config.Movement.FollowPlayerDespawnTime
-        )
-        or 0
-
-    -- 0 = never
-
-    spawnTime =
-        tonumber(spawnTime)
-        or os.clock()
+    local speed = tonumber(config.Movement.Speed) or 100
+    local despawnTime = tonumber(config.Movement.FollowPlayerDespawnTime) or 0
+    spawnTime = tonumber(spawnTime) or os.clock()
 
     --// PLAYER ROOT //--
 
     local function GetPlayerRoot()
+        local character = player.Character
+        if not character then return nil end
 
-        local character =
-            player.Character
-
-        if not character then
-            return nil
-        end
-
-        return character:FindFirstChild(
-            "HumanoidRootPart"
-        )
-        or character:FindFirstChild(
-            "Root"
-        )
+        return character:FindFirstChild("HumanoidRootPart") or character:FindFirstChild("Root")
     end
 
     --// ROOM NUMBER //--
 
     local function GetRoomNumber(room)
-
-        if not room then
-            return nil
-        end
-
-        return tonumber(
-            room.Name
-        )
+        if not room then return nil end
+        return tonumber(room.Name)
     end
 
     --// ROOM DETECTION //--
 
-    local function GetRoomAtPosition(
-        position
-    )
+    local function GetRoomAtPosition(position)
+        local rooms = CurrentRooms:GetChildren()
 
-        local rooms =
-            CurrentRooms:GetChildren()
+        table.sort(rooms, function(a, b)
+            return (tonumber(a.Name) or math.huge) < (tonumber(b.Name) or math.huge)
+        end)
 
-        table.sort(
-            rooms,
-            function(a, b)
-
-                return
-                    (
-                        tonumber(a.Name)
-                        or math.huge
-                    )
-                    <
-                    (
-                        tonumber(b.Name)
-                        or math.huge
-                    )
-            end
-        )
-
-        for _, room in
-            ipairs(rooms) do
-
-            local roomNumber =
-                tonumber(room.Name)
-
+        for _, room in ipairs(rooms) do
+            local roomNumber = tonumber(room.Name)
             if roomNumber then
+                local params = RaycastParams.new()
+                params.FilterType = Enum.RaycastFilterType.Include
+                params.FilterDescendantsInstances = { room }
 
-                local roomModel =
-                    room:FindFirstChild(
-                        room.Name
-                    )
+                local result = workspace:Raycast(
+                    position + Vector3.new(0, 10, 0),
+                    Vector3.new(0, -100, 0),
+                    params
+                )
 
-                if roomModel then
-
-                    local params =
-                        RaycastParams.new()
-
-                    params.FilterType =
-                        Enum.RaycastFilterType.Include
-
-                    params.FilterDescendantsInstances =
-                        {
-                            roomModel
-                        }
-
-                    params.CollisionGroup =
-                        "BaseCheck"
-
-                    local result =
-                        workspace:Raycast(
-                            position
-                                + Vector3.new(
-                                    0,
-                                    5,
-                                    0
-                                ),
-
-                            Vector3.new(
-                                0,
-                                -100,
-                                0
-                            ),
-
-                            params
-                        )
-
-                    if result then
-                        return room
-                    end
+                if result then
+                    return room
                 end
             end
         end
@@ -2352,148 +1254,63 @@ local function StartHybridMovement(
     --// PLAYER ROOM //--
 
     local function GetPlayerRoom()
+        local root = GetPlayerRoot()
+        if not root then return nil end
 
-        local root =
-            GetPlayerRoot()
-
-        if not root then
-            return nil
-        end
-
-        local currentRoom =
-            player:GetAttribute(
-                "CurrentRoom"
-            )
-
+        local currentRoom = player:GetAttribute("CurrentRoom")
         if currentRoom then
-
-            local room =
-                CurrentRooms:FindFirstChild(
-                    tostring(currentRoom)
-                )
-
+            local room = CurrentRooms:FindFirstChild(tostring(currentRoom))
             if room then
                 return room
             end
         end
 
-        return GetRoomAtPosition(
-            root.Position
-        )
+        return GetRoomAtPosition(root.Position)
     end
 
     --// ENTITY ROOM //--
 
     local function GetEntityRoom()
-
-        if not model.Parent then
-            return nil
-        end
-
-        return GetRoomAtPosition(
-            model:GetPivot().Position
-        )
+        if not model.Parent then return nil end
+        return GetRoomAtPosition(model:GetPivot().Position)
     end
 
     --// V2-STYLE ROOM NODES //--
 
     local function GetNodesFromRoom(room)
-
         local nodes = {}
+        if not room then return nodes end
 
-        if not room then
-            return nodes
-        end
-
-        --// entrance //--
-
-        local roomEntrance =
-            room:FindFirstChild(
-                "RoomEntrance"
-            )
-
+        -- entrance
+        local roomEntrance = room:FindFirstChild("RoomEntrance")
         if roomEntrance then
-
-            local node =
-                roomEntrance:Clone()
-
+            local node = roomEntrance:Clone()
             node.Name = "0"
-
-            node.CFrame -=
-                Vector3.new(
-                    0,
-                    3,
-                    0
-                )
-
-            nodes[#nodes + 1] =
-                node
+            node.CFrame -= Vector3.new(0, 3, 0)
+            nodes[#nodes + 1] = node
         end
 
-        --// path nodes //--
-
-        local nodesFolder =
-            room:FindFirstChild(
-                "PathfindNodes"
-            )
-
+        -- path nodes
+        local nodesFolder = room:FindFirstChild("Nodes") or room:FindFirstChild("PathfindNodes")
         if nodesFolder then
+            local roomNodes = nodesFolder:GetChildren()
+            table.sort(roomNodes, function(a, b)
+                return (tonumber(a.Name) or math.huge) < (tonumber(b.Name) or math.huge)
+            end)
 
-            local roomNodes =
-                nodesFolder:GetChildren()
-
-            table.sort(
-                roomNodes,
-                function(a, b)
-
-                    return
-                        (
-                            tonumber(a.Name)
-                            or math.huge
-                        )
-                        <
-                        (
-                            tonumber(b.Name)
-                            or math.huge
-                        )
-                end
-            )
-
-            for _, node in
-                ipairs(roomNodes) do
-
-                nodes[#nodes + 1] =
-                    node
+            for _, node in ipairs(roomNodes) do
+                nodes[#nodes + 1] = node
             end
         end
 
-        --// exit //--
-
-        local roomExit =
-            room:FindFirstChild(
-                "RoomExit"
-            )
-
+        -- exit
+        local roomExit = room:FindFirstChild("RoomExit")
         if roomExit then
-
-            local index =
-                #nodes + 1
-
-            local node =
-                roomExit:Clone()
-
-            node.Name =
-                tostring(index)
-
-            node.CFrame -=
-                Vector3.new(
-                    0,
-                    3,
-                    0
-                )
-
-            nodes[#nodes + 1] =
-                node
+            local index = #nodes + 1
+            local node = roomExit:Clone()
+            node.Name = tostring(index)
+            node.CFrame -= Vector3.new(0, 3, 0)
+            nodes[#nodes + 1] = node
         end
 
         return nodes
@@ -2502,149 +1319,62 @@ local function StartHybridMovement(
     --// ORDERED ROOMS //--
 
     local function GetOrderedRooms()
-
-        local rooms =
-            CurrentRooms:GetChildren()
-
-        table.sort(
-            rooms,
-            function(a, b)
-
-                return
-                    (
-                        tonumber(a.Name)
-                        or math.huge
-                    )
-                    <
-                    (
-                        tonumber(b.Name)
-                        or math.huge
-                    )
-            end
-        )
-
+        local rooms = CurrentRooms:GetChildren()
+        table.sort(rooms, function(a, b)
+            return (tonumber(a.Name) or math.huge) < (tonumber(b.Name) or math.huge)
+        end)
         return rooms
     end
 
     --// NODE POSITION //--
 
     local function GetNodePosition(node)
-
         return (
-            node.CFrame
-            + Vector3.new(
-                0,
-                3
-                    + (
-                        config.Entity.HeightOffset
-                        or 0
-                    ),
-                0
-            )
+            node.CFrame + Vector3.new(0, 3 + (config.Entity.HeightOffset or 0), 0)
         ).Position
     end
 
     --// BUILD ROUTE //--
 
-    local function BuildRoute(
-        startRoom,
-        targetRoom
-    )
-
+    local function BuildRoute(startRoom, targetRoom)
         local route = {}
+        if not startRoom or not targetRoom then return route end
 
-        if not startRoom
-            or not targetRoom then
+        local startNumber = GetRoomNumber(startRoom)
+        local targetNumber = GetRoomNumber(targetRoom)
 
-            return route
-        end
+        if not startNumber or not targetNumber then return route end
 
-        local startNumber =
-            GetRoomNumber(
-                startRoom
-            )
-
-        local targetNumber =
-            GetRoomNumber(
-                targetRoom
-            )
-
-        if not startNumber
-            or not targetNumber then
-
-            return route
-        end
-
-        if startNumber ==
-            targetNumber then
-
-            return route
-        end
-
-        local rooms =
-            GetOrderedRooms()
-
-        local step
-
-        if targetNumber >
-            startNumber then
-
-            step = 1
-
-        else
-
-            step = -1
-        end
+        local rooms = GetOrderedRooms()
+        local step = (targetNumber >= startNumber) and 1 or -1
 
         local roomMap = {}
-
-        for _, room in
-            ipairs(rooms) do
-
-            local number =
-                GetRoomNumber(room)
-
+        for _, room in ipairs(rooms) do
+            local number = GetRoomNumber(room)
             if number then
-                roomMap[number] =
-                    room
+                roomMap[number] = room
             end
         end
 
-        local roomNumber =
-            startNumber
+        local roomNumber = startNumber
 
-        while roomNumber ~=
-            targetNumber do
-
-            local room =
-                roomMap[roomNumber]
-
+        while true do
+            local room = roomMap[roomNumber]
             if room then
-
-                local nodes =
-                    GetNodesFromRoom(
-                        room
-                    )
+                local nodes = GetNodesFromRoom(room)
 
                 if step > 0 then
-
-                    for _, node in
-                        ipairs(nodes) do
-
-                        route[#route + 1] =
-                            node
+                    for _, node in ipairs(nodes) do
+                        route[#route + 1] = node
                     end
-
                 else
-
                     for i = #nodes, 1, -1 do
-
-                        route[#route + 1] =
-                            nodes[i]
+                        route[#route + 1] = nodes[i]
                     end
                 end
             end
 
+            if roomNumber == targetNumber then break end
             roomNumber += step
         end
 
@@ -2653,295 +1383,123 @@ local function StartHybridMovement(
 
     --// MOVE ONE FRAME //--
 
-    local function MoveToward(
-        targetPosition,
-        deltaTime
-    )
+    local function MoveToward(targetPosition, deltaTime)
+        if not model.Parent then return true end
 
-        if not model.Parent then
-            return true
-        end
+        local pivot = model:GetPivot()
+        local currentPosition = pivot.Position
+        local difference = targetPosition - currentPosition
+        local distance = difference.Magnitude
 
-        local pivot =
-            model:GetPivot()
-
-        local currentPosition =
-            pivot.Position
-
-        local difference =
-            targetPosition
-            - currentPosition
-
-        local distance =
-            difference.Magnitude
-
-        if distance <= 0.15 then
-
+        if distance <= 0.25 then
             model:PivotTo(
-                CFrame.new(
-                    targetPosition
-                )
-                * (
-                    pivot
-                    - pivot.Position
-                )
+                CFrame.new(targetPosition) * (pivot - pivot.Position)
             )
-
             return true
         end
 
-        local direction =
-            difference.Unit
-
-        local step =
-            math.min(
-                speed * deltaTime,
-                distance
-            )
-
-        local newPosition =
-            currentPosition
-            + direction * step
-
-        local flatDirection =
-            Vector3.new(
-                direction.X,
-                0,
-                direction.Z
-            )
+        local direction = difference.Unit
+        local step = math.min(speed * deltaTime, distance)
+        local newPosition = currentPosition + direction * step
+        local flatDirection = Vector3.new(direction.X, 0, direction.Z)
 
         local newCFrame
-
-        if flatDirection.Magnitude
-            > 0.001 then
-
-            newCFrame =
-                CFrame.lookAt(
-                    newPosition,
-                    newPosition
-                        + flatDirection
-                )
-
+        if flatDirection.Magnitude > 0.001 then
+            newCFrame = CFrame.lookAt(newPosition, newPosition + flatDirection)
         else
-
-            newCFrame =
-                CFrame.new(
-                    newPosition
-                )
-                * (
-                    pivot
-                    - pivot.Position
-                )
+            newCFrame = CFrame.new(newPosition) * (pivot - pivot.Position)
         end
 
-        model:PivotTo(
-            newCFrame
-        )
-
+        model:PivotTo(newCFrame)
         return false
     end
 
     --// HYBRID CONTROLLER //--
 
     task.spawn(function()
-
         local connection
-
         local route = {}
-
         local routeIndex = 1
+        local routeTargetRoom = nil
 
-        local routeTargetRoom =
-            nil
+        connection = RunService.Heartbeat:Connect(function(deltaTime)
+            if not model.Parent then
+                connection:Disconnect()
+                return
+            end
 
-        connection =
-            RunService.Heartbeat:Connect(
-                function(deltaTime)
+            -- DESPAWN TIMER
+            if despawnTime > 0 and (os.clock() - spawnTime) >= despawnTime then
+                if not model:GetAttribute("Despawning") then
+                    model:SetAttribute("Despawning", true)
 
-                    if not model.Parent then
-
-                        connection:Disconnect()
-
-                        return
+                    if type(entity.RunCallback) == "function" then
+                        pcall(function()
+                            entity:RunCallback("OnDespawning")
+                        end)
                     end
 
-                    --// DESPAWN TIMER //--
+                    pcall(function()
+                        entity:Despawn()
+                    end)
+                end
 
-                    if despawnTime > 0
-                        and (
-                            os.clock()
-                            - spawnTime
-                        ) >= despawnTime then
+                connection:Disconnect()
+                return
+            end
 
-                        if not model:GetAttribute(
-                            "Despawning"
-                        ) then
+            -- PLAYER
+            local playerRoot = GetPlayerRoot()
+            if not playerRoot then return end
 
-                            model:SetAttribute(
-                                "Despawning",
-                                true
-                            )
+            local playerRoom = GetPlayerRoom()
+            local entityRoom = GetEntityRoom()
 
-                            task.spawn(
-                                entity.RunCallback,
-                                entity,
-                                "OnDespawning"
-                            )
+            if not playerRoom or not entityRoom then
+                MoveToward(playerRoot.Position, deltaTime)
+                return
+            end
 
-                            pcall(function()
-                                entity:Despawn()
-                            end)
-                        end
+            local playerRoomNumber = GetRoomNumber(playerRoom)
+            local entityRoomNumber = GetRoomNumber(entityRoom)
 
-                        connection:Disconnect()
+            if not playerRoomNumber or not entityRoomNumber then
+                return
+            end
 
-                        return
-                    end
+            -- ROUTE REBUILD
+            if routeTargetRoom ~= playerRoomNumber or #route == 0 then
+                route = BuildRoute(entityRoom, playerRoom)
+                routeIndex = 1
+                routeTargetRoom = playerRoomNumber
+            end
 
-                    --// PLAYER //--
-
-                    local playerRoot =
-                        GetPlayerRoot()
-
-                    if not playerRoot then
-                        return
-                    end
-
-                    local playerRoom =
-                        GetPlayerRoom()
-
-                    local entityRoom =
-                        GetEntityRoom()
-
-                    if not playerRoom
-                        or not entityRoom then
-
-                        return
-                    end
-
-                    local playerRoomNumber =
-                        GetRoomNumber(
-                            playerRoom
-                        )
-
-                    local entityRoomNumber =
-                        GetRoomNumber(
-                            entityRoom
-                        )
-
-                    if not playerRoomNumber
-                        or not entityRoomNumber then
-
-                        return
-                    end
-
-                    --// SAME ROOM = DIRECT CHASE //--
-
-                    if playerRoomNumber ==
-                        entityRoomNumber then
-
-                        route = {}
-
-                        routeIndex = 1
-
-                        routeTargetRoom =
-                            nil
-
-                        MoveToward(
-                            playerRoot.Position,
-                            deltaTime
-                        )
-
-                        return
-                    end
-
-                    --// DIFFERENT ROOM //--
-
-                    --// PLAYER ROOM CHANGED //--
-
-                    if routeTargetRoom ~=
-                        playerRoomNumber then
-
-                        route =
-                            BuildRoute(
-                                entityRoom,
-                                playerRoom
-                            )
-
-                        routeIndex = 1
-
-                        routeTargetRoom =
-                            playerRoomNumber
-                    end
-
-                    --// NO ROUTE YET //--
-
-                    if #route == 0 then
-                        return
-                    end
-
-                    --// ROUTE FINISHED //--
-
-                    if routeIndex >
-                        #route then
-
-                        route = {}
-
-                        routeIndex = 1
-
-                        routeTargetRoom =
-                            nil
-
-                        return
-                    end
-
-                    --// CURRENT NODE //--
-
-                    local node =
-                        route[routeIndex]
-
-                    if not node then
-
-                        routeIndex += 1
-
-                        return
-                    end
-
-                    local targetPosition =
-                        GetNodePosition(
-                            node
-                        )
-
-                    local reached =
-                        MoveToward(
-                            targetPosition,
-                            deltaTime
-                        )
+            -- FOLLOW NODES
+            if #route > 0 and routeIndex <= #route then
+                local node = route[routeIndex]
+                if node then
+                    local targetPosition = GetNodePosition(node)
+                    local reached = MoveToward(targetPosition, deltaTime)
 
                     if reached then
-
-                        pcall(function()
-
-                            entity:RunCallback(
-                                entity,
-                                "OnReachedNode",
-                                node
-                            )
-
-                        end)
-
+                        if type(entity.RunCallback) == "function" then
+                            pcall(function()
+                                entity:RunCallback("OnReachedNode", node)
+                            end)
+                        end
                         routeIndex += 1
                     end
+                else
+                    routeIndex += 1
                 end
-            )
-
-        --// disconnect when entity dies //--
+            else
+                -- Chase player directly when on final node
+                MoveToward(playerRoot.Position, deltaTime)
+            end
+        end)
 
         task.spawn(function()
-
-            while model.Parent
-                and entity:IsAlive() do
-
+            while model.Parent and entity:IsAlive() do
                 task.wait(0.25)
             end
 
@@ -2952,171 +1510,44 @@ local function StartHybridMovement(
     end)
 end
 
---// V3 SPAWN //--
+--// V3 CONSTRUCTOR //--
 
-local Brain = {}
+function Brain.Create(config)
+    assert(type(config) == "table", "V3 Brain: config table expected")
 
-function Brain.Spawn(config)
+    local assetList = ResolveConfigAssets(config)
+    Preload(config)
 
-    assert(
-        type(config) == "table",
-        "V3 Brain: Config must be a table."
-    )
+    local model = PrepareModel(config)
+    local v2Config = BuildV2Config(config, model)
+    local entity = Original.Create(v2Config)
 
-    if EntityActive
-        and CurrentEntity then
+    local spawnState = { Time = 0 }
+    SetupCallbacks(entity, config, assetList, spawnState)
 
-        pcall(function()
-
-            if CurrentEntity:IsAlive() then
-
-                CurrentEntity:Despawn()
-
-            else
-
-                StopAllActiveSounds()
-            end
+    if config.Movement and config.Movement.FollowPlayer then
+        entity:SetCallback("OnStartMoving", function()
+            StartHybridMovement(entity, config, spawnState.Time)
         end)
-
-    else
-
-        StopAllActiveSounds()
-    end
-
-    EntityActive = false
-    CurrentEntity = nil
-
-    local assetList =
-        ResolveConfigAssets(
-            config
-        )
-
-    --// SPAWN STATE //--
-    --// stores the actual OnSpawned timestamp //--
-
-    local spawnState = {
-        Time = nil
-    }
-
-    task.spawn(function()
-
-        Preload(
-            config
-        )
-    end)
-
-    local model =
-        PrepareModel(
-            config
-        )
-
-    local v2Config =
-        BuildV2Config(
-            config,
-            model
-        )
-
-    local ok, entity =
-        pcall(function()
-
-            return Original:Create(
-                v2Config
-            )
-        end)
-
-    if not ok
-        or not entity then
-
-        SafeDestroy(model)
-
-        CleanupAssetFiles(
-            assetList
-        )
-
-        error(
-            "V3 Brain: V2 Create failed: "
-            .. tostring(entity)
-        )
-    end
-
-    --// PASS SPAWN STATE INTO CALLBACKS //--
-
-    SetupCallbacks(
-        entity,
-        config,
-        assetList,
-        spawnState
-    )
-
-    local runOk, runError =
-        pcall(function()
-
-            entity:Run(false)
-        end)
-
-    if not runOk then
-
-        pcall(function()
-            entity:Despawn()
-        end)
-
-        SafeDestroy(model)
-
-        task.delay(
-            ASSET_CLEANUP_DELAY,
-            function()
-
-                CleanupAssetFiles(
-                    assetList
-                )
-            end
-        )
-
-        error(
-            "V3 Brain: V2 Run failed: "
-            .. tostring(runError)
-        )
-    end
-
-    --// START V3 HYBRID MOVEMENT //--
-
-    if config.Movement
-        and config.Movement.FollowPlayer == true then
-
-        StartHybridMovement(
-            entity,
-            config,
-            spawnState.Time
-                or os.clock()
-        )
     end
 
     return entity
 end
 
---// current entity //--
+--// EXPORT METHODS //--
 
 function Brain.GetCurrentEntity()
-
     return CurrentEntity
 end
 
---// active state //--
-
 function Brain.IsActive()
-
     return EntityActive
 end
 
---// despawn //--
-
 function Brain.Despawn()
-
-    local entity =
-        CurrentEntity
+    local entity = CurrentEntity
 
     if entity then
-
         pcall(function()
             entity:Despawn()
         end)
@@ -3126,9 +1557,8 @@ function Brain.Despawn()
     CurrentEntity = nil
 end
 
---// global //--
+--// GLOBAL EXPORT //--
 
-getgenv().VynixuEntitySpawnerV3 =
-    Brain
+getgenv().VynixuEntitySpawnerV3 = Brain
 
 return Brain
