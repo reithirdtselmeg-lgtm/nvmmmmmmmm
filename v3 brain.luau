@@ -18,7 +18,7 @@ local LocalPlayer = Players.LocalPlayer
 --// V2 SOURCE //--  
   
 local V2_URL =  
-    "https://raw.githubusercontent.com/reithirdtselmeg-lgtm/nvmmmmmmmm/refs/heads/main/.github/workflows/v2vrainnnn.luau"  
+    "https://gist.githubusercontent.com/reithirdtselmeg-lgtm/0f225198f5a454fbab1b16ffa052cd9d/raw/6a93182f55ea4b16ec7d3cf3e33b0911e80dee16/gistfile1.txt"  
   
 --// external asset system //--  
   
@@ -37,18 +37,15 @@ local ExternalAssetFunctions = {
 }  
   
 local function IsExternalUrl(value)  
-  
     return typeof(value) == "string"      
         and (      
             value:match("^https://")      
             or value:match("^http://")      
-        ) \~= nil  
-  
+        ) ~= nil  
 end  
   
 local function GetExtension(url, fallback)  
-  
-    if typeof(url) \~= "string" then      
+    if typeof(url) ~= "string" then      
         return fallback      
     end      
   
@@ -67,11 +64,9 @@ local function GetExtension(url, fallback)
     end      
   
     return fallback  
-  
 end  
   
 local function SafeIsFile(path)  
-  
     if not ExternalAssetFunctions.IsFile then      
         return false      
     end      
@@ -82,49 +77,39 @@ local function SafeIsFile(path)
         end)      
   
     return ok and result == true  
-  
 end  
   
 local function SafeDeleteFile(path)  
-  
     if not ExternalAssetFunctions.DeleteFile then      
         return      
     end      
   
     pcall(function()      
-  
         if SafeIsFile(path) then      
             delfile(path)      
         end      
-  
     end)  
-  
 end  
   
 local function EnsureAssetFolder()  
-  
     if not ExternalAssetFunctions.MakeFolder then      
         return true      
     end      
   
     local ok =      
         pcall(function()      
-  
             if not isfolder      
                 or not isfolder(ASSET_FOLDER) then      
   
                 makefolder(ASSET_FOLDER)      
   
             end      
-  
         end)      
   
     return ok  
-  
 end  
   
 local function GenerateAssetPath(url, extension)  
-  
     local randomPart =      
         tostring(math.random(100000, 999999))      
         .. "_"      
@@ -135,14 +120,12 @@ local function GenerateAssetPath(url, extension)
         .. randomPart      
         .. "."      
         .. extension  
-  
 end  
   
 local function DownloadExternalAsset(  
     url,  
     fallbackExtension  
 )  
-  
     if not IsExternalUrl(url) then      
         return url, nil      
     end      
@@ -160,7 +143,6 @@ local function DownloadExternalAsset(
     end      
   
     if not EnsureAssetFolder() then      
-  
         warn(      
             "V3 Brain: failed to prepare asset folder."      
         )      
@@ -174,7 +156,7 @@ local function DownloadExternalAsset(
         end)      
   
     if not ok      
-        or typeof(data) \~= "string"      
+        or typeof(data) ~= "string"      
         or #data == 0 then      
   
         warn(      
@@ -203,7 +185,6 @@ local function DownloadExternalAsset(
         end)      
   
     if not writeOk then      
-  
         warn(      
             "V3 Brain: failed to write external asset:\n"      
             .. path      
@@ -218,7 +199,7 @@ local function DownloadExternalAsset(
         end)      
   
     if not customOk      
-        or typeof(customAsset) \~= "string"      
+        or typeof(customAsset) ~= "string"      
         or customAsset == "" then      
   
         SafeDeleteFile(path)      
@@ -232,7 +213,6 @@ local function DownloadExternalAsset(
     end      
   
     return customAsset, path  
-  
 end  
   
 local function ResolveAsset(  
@@ -240,8 +220,7 @@ local function ResolveAsset(
     fallbackExtension,  
     assetList  
 )  
-  
-    if typeof(value) \~= "string"      
+    if typeof(value) ~= "string"      
         or value == "" then      
   
         return value      
@@ -258,60 +237,48 @@ local function ResolveAsset(
         )      
   
     if path then      
-  
         table.insert(      
             assetList,      
             path      
         )      
-  
     end      
   
     return resolved  
-  
 end  
   
 local function CleanupAssetFiles(assetList)  
-  
-    if typeof(assetList) \~= "table" then      
+    if typeof(assetList) ~= "table" then      
         return      
     end      
   
     for _, path in ipairs(assetList) do      
-  
         if typeof(path) == "string" then      
             SafeDeleteFile(path)      
         end      
-  
     end      
   
     table.clear(assetList)  
-  
 end  
   
 --// resolve all supported config assets //--  
   
 local function ResolveConfigAssets(config)  
-  
     local assetList = {}      
   
     local function Image(value)      
-  
         return ResolveAsset(      
             value,      
             "png",      
             assetList      
         )      
-  
     end      
   
     local function Sound(value)      
-  
         return ResolveAsset(      
             value,      
             "ogg",      
             assetList      
         )      
-  
     end      
   
     config.FaceId =      
@@ -339,23 +306,19 @@ local function ResolveConfigAssets(config)
         Sound(config.DespawnSound)      
   
     if config.Jumpscare then      
-  
         config.Jumpscare.Image =      
             Image(config.Jumpscare.Image)      
   
         config.Jumpscare.Sound =      
             Sound(config.Jumpscare.Sound)      
-  
     end      
   
     return assetList  
-  
 end  
   
 --// V3 MOVEMENT PATCH //--  
   
 local function PatchV2Source(source)  
-  
     local movementStart =      
         source:find(      
             "local function EntityMoveTo",      
@@ -504,16 +467,13 @@ end
         )      
   
     if matchCount == 0 then      
-  
         warn(      
             "V3 Brain: 'OnReachNode' -> "      
             .. "'OnReachedNode' patch matched 0 occurrences."      
         )      
-  
     end      
   
     return patchedSource  
-  
 end  
   
 --// Load patched V2 //--  
@@ -523,14 +483,13 @@ getgenv().VynixuEntitySpawnerV2 = nil
 local Original  
   
 do  
-  
     local ok, source =      
         pcall(function()      
             return game:HttpGet(V2_URL)      
         end)      
   
     if not ok      
-        or typeof(source) \~= "string" then      
+        or typeof(source) ~= "string" then      
   
         error(      
             "V3 Brain: failed to download V2 source."      
@@ -544,12 +503,10 @@ do
         end)      
   
     if not patchOk then      
-  
         error(      
             "V3 Brain: failed to patch V2 movement:\n"      
             .. tostring(patchedSource)      
         )      
-  
     end      
   
     local loadOk, result =      
@@ -558,7 +515,7 @@ do
         end)      
   
     if not loadOk      
-        or typeof(result) \~= "table" then      
+        or typeof(result) ~= "table" then      
   
         error(      
             "V3 Brain: failed to load patched V2:\n"      
@@ -571,13 +528,11 @@ do
   
     getgenv().VynixuEntitySpawnerV2 =      
         Original  
-  
 end  
   
 --// colors //--  
   
 local AuraColors = {  
-  
     Red = Color3.fromRGB(255, 60, 60),      
     Orange = Color3.fromRGB(255, 140, 0),      
     Yellow = Color3.fromRGB(255, 230, 40),      
@@ -599,7 +554,6 @@ local AuraColors = {
     White = Color3.fromRGB(255, 255, 255),      
     Grey = Color3.fromRGB(128, 128, 128),      
     Black = Color3.fromRGB(0, 0, 0)  
-  
 }  
   
 _G.AuraColors = AuraColors  
@@ -607,22 +561,19 @@ _G.AuraColors = AuraColors
 --// color mixer //--  
   
 local function MixColors(color1, color2)  
-  
     return Color3.new(      
         (color1.R + color2.R) / 2,      
         (color1.G + color2.G) / 2,      
         (color1.B + color2.B) / 2      
     )  
-  
 end  
   
 local function GetColor(value)  
-  
     if typeof(value) == "Color3" then      
         return value      
     end      
   
-    if typeof(value) \~= "string" then      
+    if typeof(value) ~= "string" then      
         return Color3.new(1, 1, 1)      
     end      
   
@@ -636,7 +587,6 @@ local function GetColor(value)
         )      
   
     if left and right then      
-  
         if string.find(right, "%+") then      
             return Color3.new(1, 1, 1)      
         end      
@@ -653,11 +603,9 @@ local function GetColor(value)
                 color2      
             )      
         end      
-  
     end      
   
     return Color3.new(1, 1, 1)  
-  
 end  
   
 --// state //--  
@@ -671,43 +619,32 @@ local EnvironmentEffect = nil
 local ActiveSounds = {}  
   
 local function SafeDestroy(instance)  
-  
     if instance then      
-  
         pcall(function()      
             instance:Destroy()      
         end)      
-  
     end  
-  
 end  
   
 local function StopSound(sound)  
-  
     if sound then      
-  
         pcall(function()      
             sound:Stop()      
         end)      
   
         SafeDestroy(sound)      
-  
     end  
-  
 end  
   
 local function StopAllActiveSounds()  
-  
     for sound, _ in pairs(ActiveSounds) do      
         StopSound(sound)      
     end      
   
     table.clear(ActiveSounds)  
-  
 end  
   
 local function FindFacePart(model)  
-  
     if not model then      
         return nil      
     end      
@@ -721,13 +658,11 @@ local function FindFacePart(model)
         true      
     )      
     or model.PrimaryPart  
-  
 end  
   
 --// make entity //--  
   
 local function PrepareModel(config)  
-  
     local model =      
         Instance.new("Model")      
   
@@ -788,13 +723,11 @@ local function PrepareModel(config)
     weld.Parent = face      
   
     return model  
-  
 end  
   
 --// face //--  
   
 local function SetupFace(model, config)  
-  
     local facePart =      
         FindFacePart(model)      
   
@@ -805,7 +738,7 @@ local function SetupFace(model, config)
     local faceId =      
         config.FaceId      
   
-    if typeof(faceId) \~= "string"      
+    if typeof(faceId) ~= "string"      
         or faceId == "" then      
         return      
     end      
@@ -816,7 +749,6 @@ local function SetupFace(model, config)
         )      
   
     if not attachment then      
-  
         attachment =      
             Instance.new(      
                 "Attachment"      
@@ -827,7 +759,6 @@ local function SetupFace(model, config)
   
         attachment.Parent =      
             facePart      
-  
     end      
   
     local emitter =      
@@ -836,7 +767,6 @@ local function SetupFace(model, config)
         )      
   
     if not emitter then      
-  
         emitter =      
             Instance.new(      
                 "ParticleEmitter"      
@@ -847,7 +777,6 @@ local function SetupFace(model, config)
   
         emitter.Parent =      
             attachment      
-  
     end      
   
     emitter.Texture =      
@@ -863,18 +792,16 @@ local function SetupFace(model, config)
         end)      
   
     end  
-  
 end  
   
 --// multi-aura //--  
   
 local function SetupAura(model, config)  
-  
     local root =  
         model.PrimaryPart  
   
     if not root  
-        or typeof(config.Auras) \~= "table"  
+        or typeof(config.Auras) ~= "table"  
         or #config.Auras == 0 then  
         return  
     end  
@@ -884,8 +811,8 @@ local function SetupAura(model, config)
     local firstAura =  
         config.Auras[1]  
   
-    if typeof(firstAura) \~= "table"  
-        or typeof(firstAura.Id) \~= "string"  
+    if typeof(firstAura) ~= "table"  
+        or typeof(firstAura.Id) ~= "string"  
         or firstAura.Id == "" then  
   
         warn(  
@@ -896,7 +823,6 @@ local function SetupAura(model, config)
     end  
   
     if firstAura.Color == nil then  
-  
         warn(  
             "V3 Brain: Aura #1 MUST define the master Color."  
         )  
@@ -913,13 +839,12 @@ local function SetupAura(model, config)
     --// CREATE 1-3 AURAS //--  
   
     for index = 1, math.min(#config.Auras, 3) do  
-  
         local auraData =  
             config.Auras[index]  
   
         if typeof(auraData) == "table"  
             and typeof(auraData.Id) == "string"  
-            and auraData.Id \~= "" then  
+            and auraData.Id ~= "" then  
   
             local attachmentName =  
                 "AuraAttachment" .. index  
@@ -933,7 +858,6 @@ local function SetupAura(model, config)
                 )  
   
             if not attachment then  
-  
                 attachment =  
                     Instance.new("Attachment")  
   
@@ -942,7 +866,6 @@ local function SetupAura(model, config)
   
                 attachment.Parent =  
                     root  
-  
             end  
   
             local emitter =  
@@ -951,7 +874,6 @@ local function SetupAura(model, config)
                 )  
   
             if not emitter then  
-  
                 emitter =  
                     Instance.new("ParticleEmitter")  
   
@@ -960,7 +882,6 @@ local function SetupAura(model, config)
   
                 emitter.Parent =  
                     attachment  
-  
             end  
   
             emitter.Texture =  
@@ -977,18 +898,12 @@ local function SetupAura(model, config)
                 pairs(auraData.Settings or {}) do  
   
                 pcall(function()  
-  
                     emitter[property] =  
                         value  
-  
                 end)  
-  
             end  
-  
         end  
-  
     end  
-  
 end  
   
 --// entity lamp //--  
@@ -998,7 +913,6 @@ local function SetupLight(
     data,  
     name  
 )  
-  
     local root =      
         model.PrimaryPart      
   
@@ -1035,21 +949,17 @@ local function SetupLight(
     light.Parent = root      
   
     return light  
-  
 end  
   
 --// environment //--  
   
 local function SetupEnvironment(config)  
-  
     if EnvironmentEffect then      
-  
         SafeDestroy(      
             EnvironmentEffect      
         )      
   
         EnvironmentEffect = nil      
-  
     end      
   
     local data =      
@@ -1133,11 +1043,9 @@ local function SetupEnvironment(config)
         )      
   
     tween:Play()  
-  
 end  
   
 local function RemoveEnvironment(config)  
-  
     local effect =      
         EnvironmentEffect      
   
@@ -1188,7 +1096,6 @@ local function RemoveEnvironment(config)
             SafeDestroy(effect)      
         end      
     )  
-  
 end  
   
 --// sounds //--  
@@ -1201,9 +1108,8 @@ local function CreateSound(
     name,  
     looped  
 )  
-  
     if not parent      
-        or typeof(soundId) \~= "string"      
+        or typeof(soundId) ~= "string"      
         or soundId == "" then      
   
         return nil      
@@ -1231,7 +1137,6 @@ local function CreateSound(
         parent      
   
     return sound  
-  
 end  
   
 --// spawn sound //--  
@@ -1239,7 +1144,6 @@ end
 local function PlaySpawnSound(  
     config  
 )  
-  
     local playerGui =      
         LocalPlayer:FindFirstChildOfClass(      
             "PlayerGui"      
@@ -1273,7 +1177,6 @@ local function PlaySpawnSound(
             SafeDestroy(sound)      
         end      
     )  
-  
 end  
   
 --// rush sounds //--  
@@ -1285,7 +1188,6 @@ local function PlayRushSound(
     playbackSpeed,  
     name  
 )  
-  
     if not model then      
         return      
     end      
@@ -1318,13 +1220,11 @@ local function PlayRushSound(
         true      
   
     sound:Play()  
-  
 end  
   
 local function FadeOutActiveSounds(  
     duration  
 )  
-  
     duration =      
         math.max(      
             tonumber(duration)      
@@ -1341,7 +1241,6 @@ local function FadeOutActiveSounds(
             soundsToFade,      
             sound      
         )      
-  
     end      
   
     table.clear(      
@@ -1374,24 +1273,18 @@ local function FadeOutActiveSounds(
             task.delay(      
                 duration,      
                 function()      
-  
                     SafeDestroy(      
                         sound      
                     )      
-  
                 end      
             )      
-  
         end      
-  
     end  
-  
 end  
   
 --// despawn sound //--  
   
 local function PlayDespawnSound(config)  
-  
     local playerGui =      
         LocalPlayer:FindFirstChildOfClass(      
             "PlayerGui"      
@@ -1425,21 +1318,18 @@ local function PlayDespawnSound(config)
             SafeDestroy(sound)      
         end      
     )  
-  
 end  
   
 --// preload //--  
   
 local function Preload(config)  
-  
     local assets = {}      
   
     local function AddAsset(      
         id,      
         className      
     )      
-  
-        if typeof(id) \~= "string"      
+        if typeof(id) ~= "string"      
             or id == "" then      
             return      
         end      
@@ -1453,15 +1343,12 @@ local function Preload(config)
         if asset:IsA(      
             "ImageLabel"      
         ) then      
-  
             asset.Image = id      
   
         elseif asset:IsA(      
             "Sound"      
         ) then      
-  
             asset.SoundId = id      
-  
         end      
   
         asset.Parent =      
@@ -1473,7 +1360,6 @@ local function Preload(config)
             assets,      
             asset      
         )      
-  
     end      
   
     AddAsset(      
@@ -1514,7 +1400,6 @@ local function Preload(config)
     )      
   
     if config.Jumpscare then      
-  
         AddAsset(      
             config.Jumpscare.Image,      
             "ImageLabel"      
@@ -1524,34 +1409,25 @@ local function Preload(config)
             config.Jumpscare.Sound,      
             "Sound"      
         )      
-  
     end      
   
     if #assets > 0 then      
-  
         pcall(function()      
-  
             ContentProvider:PreloadAsync(      
                 assets      
             )      
-  
         end)      
-  
     end      
   
     for _, asset in      
         ipairs(assets) do      
-  
         SafeDestroy(asset)      
-  
     end  
-  
 end  
   
 --// jumpscare //--  
   
 local function RunJumpscare(config)  
-  
     local data =      
         config.Jumpscare      
   
@@ -1657,7 +1533,7 @@ local function RunJumpscare(config)
   
     if typeof(data.Sound)      
         == "string"      
-        and data.Sound \~= "" then      
+        and data.Sound ~= "" then      
   
         sound =      
             Instance.new("Sound")      
@@ -1676,7 +1552,6 @@ local function RunJumpscare(config)
         sound.Parent = gui      
   
         if data.PitchShiftEnabled then      
-  
             local pitch =      
                 Instance.new(      
                     "PitchShiftSoundEffect"      
@@ -1684,11 +1559,9 @@ local function RunJumpscare(config)
   
             pitch.Octave = 1      
             pitch.Parent = sound      
-  
         end      
   
         sound:Play()      
-  
     end      
   
     local duration =      
@@ -1701,7 +1574,6 @@ local function RunJumpscare(config)
     --// FLASH //--      
   
     if data.FlashEnabled then      
-  
         local flashColor =      
             GetColor(      
                 data.FlashColor      
@@ -1721,7 +1593,6 @@ local function RunJumpscare(config)
             0      
   
         task.spawn(function()      
-  
             local flashSpeed =      
                 math.max(      
                     data.FlashSpeed      
@@ -1735,7 +1606,6 @@ local function RunJumpscare(config)
             local useColor = false      
   
             while gui.Parent do      
-  
                 local elapsed =      
                     os.clock()      
                     - startTime      
@@ -1766,16 +1636,11 @@ local function RunJumpscare(config)
                 task.wait(      
                     flashSpeed      
                 )      
-  
             end      
-  
         end)      
-  
     else      
-  
         flash.BackgroundTransparency =      
             1      
-  
     end      
   
     --// FACE GROW //--      
@@ -1786,13 +1651,11 @@ local function RunJumpscare(config)
   
     TweenService:Create(      
         image,      
-  
         TweenInfo.new(      
             duration,      
             Enum.EasingStyle.Exponential,      
             Enum.EasingDirection.Out      
         ),      
-  
         {      
             Size =      
                 UDim2.fromScale(      
@@ -1800,20 +1663,17 @@ local function RunJumpscare(config)
                     1      
                 )      
         }      
-  
     ):Play()      
   
     --// WIGGLE //--      
   
     task.spawn(function()      
-  
         local startTime =      
             os.clock()      
   
         local direction = 1      
   
         while gui.Parent do      
-  
             local elapsed =      
                 os.clock()      
                 - startTime      
@@ -1850,19 +1710,16 @@ local function RunJumpscare(config)
   
             direction =      
                 -direction      
-  
         end      
   
         if image.Parent then      
             image.Rotation = 0      
         end      
-  
     end)      
   
     task.wait(duration)      
   
     SafeDestroy(gui)  
-  
 end  
   
 --// V3 → V2 config //--  
@@ -1871,11 +1728,8 @@ local function BuildV2Config(
     config,  
     model  
 )  
-  
     return {      
-  
         Entity = {      
-  
             Name =      
                 config.EntityName      
                 or "CustomEntity",      
@@ -1888,7 +1742,6 @@ local function BuildV2Config(
         },      
   
         Movement = {      
-  
             Speed =      
                 config.Movement.Speed,      
   
@@ -1900,7 +1753,6 @@ local function BuildV2Config(
         },      
   
         Damage = {      
-  
             Enabled =      
                 config.Damage.Enabled,      
   
@@ -1915,9 +1767,7 @@ local function BuildV2Config(
         },      
   
         Lights = {      
-  
             Flicker = {      
-  
                 Enabled =      
                     config.Lights.Flicker.Enabled,      
   
@@ -1933,13 +1783,11 @@ local function BuildV2Config(
         },      
   
         Earthquake = {      
-  
             Enabled =      
                 config.Earthquake.Enabled      
         },      
   
         CameraShake = {      
-  
             Enabled =      
                 config.CameraShake.Enabled,      
   
@@ -1951,7 +1799,6 @@ local function BuildV2Config(
         },      
   
         Crucifixion = {      
-  
             Type =      
                 config.Crucifixion.Type,      
   
@@ -1969,7 +1816,6 @@ local function BuildV2Config(
         },      
   
         Rebounding = {      
-  
             Enabled =      
                 config.Rebounding.Enabled,      
   
@@ -1987,7 +1833,6 @@ local function BuildV2Config(
         },      
   
         Death = {      
-  
             Type =      
                 config.Death.Type,      
   
@@ -1997,9 +1842,7 @@ local function BuildV2Config(
             Cause =      
                 config.Death.Cause      
         }      
-  
     }  
-  
 end  
   
 --// callbacks //--  
@@ -2009,11 +1852,9 @@ local function SetupCallbacks(
     config,  
     assetList  
 )  
-  
     entity:SetCallback(      
         "OnSpawned",      
         function()      
-  
             EntityActive = true      
             CurrentEntity = entity      
   
@@ -2053,14 +1894,12 @@ local function SetupCallbacks(
             PlaySpawnSound(      
                 config      
             )      
-  
         end      
     )      
   
     entity:SetCallback(      
         "OnStartMoving",      
         function()      
-  
             local model =      
                 entity.Model      
   
@@ -2075,18 +1914,15 @@ local function SetupCallbacks(
                 config.FarPlaybackSpeed,      
                 "FarRush"      
             )      
-  
         end      
     )      
   
     entity:SetCallback(      
         "OnReachedNode",      
         function(...)      
-  
             if not EntityActive then      
                 return      
             end      
-  
         end      
     )      
   
@@ -2096,7 +1932,6 @@ local function SetupCallbacks(
             room,      
             firstTime      
         )      
-  
             if not EntityActive then      
                 return      
             end      
@@ -2109,7 +1944,6 @@ local function SetupCallbacks(
             end      
   
             if firstTime then      
-  
                 PlayRushSound(      
                     model,      
                     config.NearRushSound,      
@@ -2117,38 +1951,31 @@ local function SetupCallbacks(
                     config.NearPlaybackSpeed,      
                     "NearRush"      
                 )      
-  
             end      
-  
         end      
     )      
   
     entity:SetCallback(      
         "OnLookAt",      
         function(...)      
-  
             if not EntityActive then      
                 return      
             end      
-  
         end      
     )      
   
     entity:SetCallback(      
         "OnRebounding",      
         function(...)      
-  
             if not EntityActive then      
                 return      
             end      
-  
         end      
     )      
   
     entity:SetCallback(      
         "OnDespawning",      
         function()      
-  
             FadeOutActiveSounds(      
                 0.3      
             )      
@@ -2156,15 +1983,12 @@ local function SetupCallbacks(
             RemoveEnvironment(      
                 config      
             )      
-  
         end      
-  
     )      
   
     entity:SetCallback(      
         "OnDespawned",      
         function()      
-  
             EntityActive = false      
   
             if CurrentEntity == entity then      
@@ -2185,21 +2009,17 @@ local function SetupCallbacks(
             task.delay(      
                 ASSET_CLEANUP_DELAY,      
                 function()      
-  
                     CleanupAssetFiles(      
                         ownedAssets      
                     )      
-  
                 end      
             )      
-  
         end      
     )      
   
     entity:SetCallback(      
         "OnDamagePlayer",      
         function(newHealth)      
-  
             if not EntityActive then      
                 return      
             end      
@@ -2208,18 +2028,13 @@ local function SetupCallbacks(
                 and config.Jumpscare.Enabled then      
   
                 task.spawn(function()      
-  
                     RunJumpscare(      
                         config      
                     )      
-  
                 end)      
-  
             end      
-  
         end      
     )  
-  
 end  
   
 --// V3 SPAWN //--  
@@ -2227,7 +2042,6 @@ end
 local Brain = {}  
   
 function Brain.Spawn(config)  
-  
     assert(      
         type(config) == "table",      
         "V3 Brain: Config must be a table."      
@@ -2237,19 +2051,14 @@ function Brain.Spawn(config)
         and CurrentEntity then      
   
         pcall(function()      
-  
             if CurrentEntity:IsAlive() then      
                 CurrentEntity:Despawn()      
             else      
                 StopAllActiveSounds()      
             end      
-  
         end)      
-  
     else      
-  
         StopAllActiveSounds()      
-  
     end      
   
     EntityActive = false      
@@ -2261,11 +2070,9 @@ function Brain.Spawn(config)
         )      
   
     task.spawn(function()      
-  
         Preload(      
             config      
         )      
-  
     end)      
   
     local model =      
@@ -2281,15 +2088,12 @@ function Brain.Spawn(config)
   
     local ok, entity =      
         pcall(function()      
-  
             return Original:Create(      
                 v2Config      
             )      
-  
         end)      
   
     if not ok or not entity then      
-  
         SafeDestroy(model)      
   
         CleanupAssetFiles(      
@@ -2300,7 +2104,6 @@ function Brain.Spawn(config)
             "V3 Brain: V2 Create failed: "      
             .. tostring(entity)      
         )      
-  
     end      
   
     SetupCallbacks(      
@@ -2311,13 +2114,10 @@ function Brain.Spawn(config)
   
     local runOk, runError =      
         pcall(function()      
-  
             entity:Run(false)      
-  
         end)      
   
     if not runOk then      
-  
         pcall(function()      
             entity:Despawn()      
         end)      
@@ -2327,11 +2127,9 @@ function Brain.Spawn(config)
         task.delay(      
             ASSET_CLEANUP_DELAY,      
             function()      
-  
                 CleanupAssetFiles(      
                     assetList      
                 )      
-  
             end      
         )      
   
@@ -2339,832 +2137,608 @@ function Brain.Spawn(config)
             "V3 Brain: V2 Run failed: "      
             .. tostring(runError)      
         )      
-  
     end
 
--- ============================================================
--- FOLLOW PLAYER OVERRIDE
--- FULL V3 MOVEMENT CONTROL
---
--- V2 node movement is completely overridden.
---
--- BEHAVIOR:
---   1. V3 follows the DOORS node system itself.
---   2. Same room as player -> direct wall chase.
---   3. Player changes rooms -> direct chase stops.
---   4. V3 resumes node movement toward the player's room.
---   5. Enter player's new room -> direct wall chase again.
--- ============================================================
-
-if config.Movement and config.Movement.FollowPlayer == true then
-    task.spawn(function()
-
-        local model = entity.Model
-        if not model then
-            return
-        end
-
-        local speed =
-            tonumber(entity.Config.Movement.Speed)
-            or tonumber(config.Movement.Speed)
-            or 50
-
-        local heightOffset =
-            tonumber(config.HeightOffset)
-            or 0
-
-        local despawnTime =
-            tonumber(config.Movement.FollowPlayerDespawnTime)
-            or 45
-
-        local startTime = os.clock()
-
-        local CurrentRooms =
-            workspace:WaitForChild("CurrentRooms")
-
-        local directChasing = false
-        local currentTargetRoom = nil
-        local nodeIndex = 1
-        local nodes = {}
-
-        local connection
-
-        -- ========================================================
-        -- ROOM DETECTION
-        -- ========================================================
-
-        local function GetRoomAtPoint(position)
-
-            local whitelist = {}
-
-            for _, room in ipairs(CurrentRooms:GetChildren()) do
-
-                local roomPart =
-                    room:FindFirstChild(room.Name)
-
-                if roomPart
-                    and roomPart:IsA("BasePart")
-                then
-                    table.insert(
-                        whitelist,
-                        roomPart
-                    )
-                end
+    if config.Movement and config.Movement.FollowPlayer == true then
+        task.spawn(function()
+            local model = entity.Model
+            if not model then
+                return
             end
 
-            if #whitelist == 0 then
+            local speed =
+                tonumber(entity.Config.Movement.Speed)
+                or tonumber(config.Movement.Speed)
+                or 50
+
+            local heightOffset =
+                tonumber(config.HeightOffset)
+                or 0
+
+            local despawnTime =
+                tonumber(config.Movement.FollowPlayerDespawnTime)
+                or 45
+
+            local startTime = os.clock()
+
+            local CurrentRooms =
+                workspace:WaitForChild("CurrentRooms")
+
+            local directChasing = false
+            local currentTargetRoom = nil
+            local nodeIndex = 1
+            local nodes = {}
+
+            local connection
+
+            local function GetRoomAtPoint(position)
+                local whitelist = {}
+
+                for _, room in ipairs(CurrentRooms:GetChildren()) do
+                    local roomPart =
+                        room:FindFirstChild(room.Name)
+
+                    if roomPart
+                        and roomPart:IsA("BasePart")
+                    then
+                        table.insert(
+                            whitelist,
+                            roomPart
+                        )
+                    end
+                end
+
+                if #whitelist == 0 then
+                    return nil
+                end
+
+                local params =
+                    RaycastParams.new()
+
+                params.FilterType =
+                    Enum.RaycastFilterType.Include
+
+                params.FilterDescendantsInstances =
+                    whitelist
+
+                params.CollisionGroup =
+                    "BaseCheck"
+
+                local result =
+                    workspace:Raycast(
+                        position,
+                        Vector3.new(0, -100, 0),
+                        params
+                    )
+
+                if not result then
+                    return nil
+                end
+
+                for _, room in ipairs(CurrentRooms:GetChildren()) do
+                    if result.Instance.Parent == room then
+                        return room
+                    end
+                end
+
                 return nil
             end
 
-            local params =
-                RaycastParams.new()
+            local function GetPlayerRoom()
+                local roomNumber =
+                    LocalPlayer:GetAttribute(
+                        "CurrentRoom"
+                    )
 
-            params.FilterType =
-                Enum.RaycastFilterType.Include
+                if roomNumber ~= nil then
+                    local room =
+                        CurrentRooms:FindFirstChild(
+                            tostring(roomNumber)
+                        )
 
-            params.FilterDescendantsInstances =
-                whitelist
+                    if room then
+                        return room
+                    end
+                end
 
-            params.CollisionGroup =
-                "BaseCheck"
+                local char =
+                    LocalPlayer.Character
 
-            local result =
-                workspace:Raycast(
-                    position,
-                    Vector3.new(0, -100, 0),
-                    params
-                )
+                local root =
+                    char
+                    and (
+                        char.PrimaryPart
+                        or char:FindFirstChild(
+                            "HumanoidRootPart"
+                        )
+                    )
 
-            if not result then
+                if root then
+                    return GetRoomAtPoint(
+                        root.Position
+                    )
+                end
+
                 return nil
             end
 
-            for _, room in ipairs(CurrentRooms:GetChildren()) do
+            local function GetNodesFromRoom(room)
+                local roomNodes = {}
 
-                if result.Instance.Parent == room then
-                    return room
+                if not room then
+                    return roomNodes
                 end
 
-            end
-
-            return nil
-
-        end
-
-        local function GetPlayerRoom()
-
-            local roomNumber =
-                LocalPlayer:GetAttribute(
-                    "CurrentRoom"
-                )
-
-            if roomNumber ~= nil then
-
-                local room =
-                    CurrentRooms:FindFirstChild(
-                        tostring(roomNumber)
+                local entrance =
+                    room:FindFirstChild(
+                        "RoomEntrance"
                     )
 
-                if room then
-                    return room
-                end
+                if entrance then
+                    local clone =
+                        entrance:Clone()
 
-            end
+                    clone.Name = "0"
 
-            local char =
-                LocalPlayer.Character
-
-            local root =
-                char
-                and (
-                    char.PrimaryPart
-                    or char:FindFirstChild(
-                        "HumanoidRootPart"
-                    )
-                )
-
-            if root then
-                return GetRoomAtPoint(
-                    root.Position
-                )
-            end
-
-            return nil
-
-        end
-
-        -- ========================================================
-        -- V3 NODE BUILDER
-        --
-        -- Same basic node structure used by V2:
-        --
-        -- RoomEntrance
-        -- PathfindNodes
-        -- RoomExit
-        -- ========================================================
-
-        local function GetNodesFromRoom(room)
-
-            local roomNodes = {}
-
-            if not room then
-                return roomNodes
-            end
-
-            local entrance =
-                room:FindFirstChild(
-                    "RoomEntrance"
-                )
-
-            if entrance then
-
-                local clone =
-                    entrance:Clone()
-
-                clone.Name = "0"
-
-                clone.CFrame =
-                    clone.CFrame
-                    - Vector3.new(0, 3, 0)
-
-                table.insert(
-                    roomNodes,
-                    clone
-                )
-
-            end
-
-            local pathfindNodes =
-                room:FindFirstChild(
-                    "PathfindNodes"
-                )
-
-            if pathfindNodes then
-
-                for _, node in ipairs(
-                    pathfindNodes:GetChildren()
-                ) do
+                    clone.CFrame =
+                        clone.CFrame
+                        - Vector3.new(0, 3, 0)
 
                     table.insert(
                         roomNodes,
-                        node
+                        clone
                     )
-
                 end
 
-            end
-
-            local exit =
-                room:FindFirstChild(
-                    "RoomExit"
-                )
-
-            if exit then
-
-                local clone =
-                    exit:Clone()
-
-                clone.Name =
-                    tostring(#roomNodes)
-
-                clone.CFrame =
-                    clone.CFrame
-                    - Vector3.new(0, 3, 0)
-
-                table.insert(
-                    roomNodes,
-                    clone
-                )
-
-            end
-
-            table.sort(
-                roomNodes,
-                function(a, b)
-
-                    return tonumber(a.Name)
-                        < tonumber(b.Name)
-
-                end
-            )
-
-            return roomNodes
-
-        end
-
-        -- ========================================================
-        -- BUILD ROUTE
-        --
-        -- Build nodes from entity's current room toward
-        -- the player's current room.
-        -- ========================================================
-
-        local function BuildRoute()
-
-            table.clear(nodes)
-
-            nodeIndex = 1
-
-            local entityRoom =
-                GetRoomAtPoint(
-                    model:GetPivot().Position
-                )
-
-            local playerRoom =
-                GetPlayerRoom()
-
-            if not entityRoom
-                or not playerRoom
-            then
-                return
-            end
-
-            local entityNumber =
-                tonumber(entityRoom.Name)
-
-            local playerNumber =
-                tonumber(playerRoom.Name)
-
-            if not entityNumber
-                or not playerNumber
-            then
-                return
-            end
-
-            currentTargetRoom =
-                playerRoom
-
-            -- ----------------------------------------------------
-            -- Same room
-            -- Direct chase will handle this.
-            -- ----------------------------------------------------
-
-            if entityNumber == playerNumber then
-                return
-            end
-
-            -- ----------------------------------------------------
-            -- Determine direction.
-            -- ----------------------------------------------------
-
-            local step
-
-            if playerNumber > entityNumber then
-                step = 1
-            else
-                step = -1
-            end
-
-            local roomNumber =
-                entityNumber
-
-            while roomNumber ~= playerNumber do
-
-                local room =
-                    CurrentRooms:FindFirstChild(
-                        tostring(roomNumber)
+                local pathfindNodes =
+                    room:FindFirstChild(
+                        "PathfindNodes"
                     )
 
-                if room then
-
-                    local roomNodes =
-                        GetNodesFromRoom(room)
-
-                    if step == -1 then
-
-                        for i =
-                            #roomNodes,
-                            1,
-                            -1
-                        do
-
-                            table.insert(
-                                nodes,
-                                roomNodes[i]
-                            )
-
-                        end
-
-                    else
-
-                        for _, node in ipairs(
-                            roomNodes
-                        ) do
-
-                            table.insert(
-                                nodes,
-                                node
-                            )
-
-                        end
-
-                    end
-
-                end
-
-                roomNumber =
-                    roomNumber + step
-
-            end
-
-            -- ----------------------------------------------------
-            -- Add the player's room nodes.
-            -- ----------------------------------------------------
-
-            local finalRoom =
-                CurrentRooms:FindFirstChild(
-                    tostring(playerNumber)
-                )
-
-            if finalRoom then
-
-                local finalNodes =
-                    GetNodesFromRoom(
-                        finalRoom
-                    )
-
-                if step == -1 then
-
-                    for i =
-                        #finalNodes,
-                        1,
-                        -1
-                    do
-
-                        table.insert(
-                            nodes,
-                            finalNodes[i]
-                        )
-
-                    end
-
-                else
-
+                if pathfindNodes then
                     for _, node in ipairs(
-                        finalNodes
+                        pathfindNodes:GetChildren()
                     ) do
-
                         table.insert(
-                            nodes,
+                            roomNodes,
                             node
                         )
-
                     end
-
                 end
 
-            end
-
-        end
-
-        -- ========================================================
-        -- DIRECT PLAYER CHASE
-        -- ========================================================
-
-        local function ChasePlayer(dt)
-
-            local char =
-                LocalPlayer.Character
-
-            local root =
-                char
-                and (
-                    char.PrimaryPart
-                    or char:FindFirstChild(
-                        "HumanoidRootPart"
+                local exit =
+                    room:FindFirstChild(
+                        "RoomExit"
                     )
-                )
 
-            if not root then
-                return
-            end
+                if exit then
+                    local clone =
+                        exit:Clone()
 
-            local targetPosition =
-                root.Position
-                + Vector3.new(
-                    0,
-                    heightOffset,
-                    0
-                )
+                    clone.Name =
+                        tostring(#roomNodes)
 
-            local pivot =
-                model:GetPivot()
+                    clone.CFrame =
+                        clone.CFrame
+                        - Vector3.new(0, 3, 0)
 
-            local difference =
-                targetPosition
-                - pivot.Position
-
-            local distance =
-                difference.Magnitude
-
-            if distance <= 0.15 then
-                return
-            end
-
-            local direction =
-                difference.Unit
-
-            local movement =
-                math.min(
-                    speed * dt,
-                    distance
-                )
-
-            local newPosition =
-                pivot.Position
-                + direction * movement
-
-            local flatDirection =
-                Vector3.new(
-                    direction.X,
-                    0,
-                    direction.Z
-                )
-
-            if flatDirection.Magnitude > 0.001 then
-
-                model:PivotTo(
-                    CFrame.lookAt(
-                        newPosition,
-                        newPosition
-                            + flatDirection
+                    table.insert(
+                        roomNodes,
+                        clone
                     )
-                )
+                end
 
-            else
-
-                local rotationOnly =
-                    pivot
-                    - pivot.Position
-
-                model:PivotTo(
-                    CFrame.new(newPosition)
-                    * rotationOnly
-                )
-
-            end
-
-        end
-
-        -- ========================================================
-        -- NODE MOVEMENT
-        -- ========================================================
-
-        local function MoveToNode(node, dt)
-
-            if not node
-                or not node.Parent
-            then
-                return true
-            end
-
-            local targetPosition =
-                node.Position
-
-            local pivot =
-                model:GetPivot()
-
-            local difference =
-                targetPosition
-                - pivot.Position
-
-            local distance =
-                difference.Magnitude
-
-            if distance <= 1.5 then
-                return true
-            end
-
-            local direction =
-                difference.Unit
-
-            local movement =
-                math.min(
-                    speed * dt,
-                    distance
-                )
-
-            local newPosition =
-                pivot.Position
-                + direction * movement
-
-            local flatDirection =
-                Vector3.new(
-                    direction.X,
-                    0,
-                    direction.Z
-                )
-
-            if flatDirection.Magnitude > 0.001 then
-
-                model:PivotTo(
-                    CFrame.lookAt(
-                        newPosition,
-                        newPosition
-                            + flatDirection
-                    )
-                )
-
-            else
-
-                local rotationOnly =
-                    pivot
-                    - pivot.Position
-
-                model:PivotTo(
-                    CFrame.new(newPosition)
-                    * rotationOnly
-                )
-
-            end
-
-            return false
-
-        end
-
-        -- ========================================================
-        -- MAIN V3 MOVEMENT LOOP
-        -- ========================================================
-
-        connection =
-            RunService.Heartbeat:Connect(
-                function(dt)
-
-                    if not entity:IsAlive()
-                        or not model.Parent
-                    then
-
-                        connection:Disconnect()
-                        return
-
+                table.sort(
+                    roomNodes,
+                    function(a, b)
+                        return tonumber(a.Name)
+                            < tonumber(b.Name)
                     end
+                )
 
-                    if model:GetAttribute(
-                        "BeingBanished"
-                    ) then
-                        return
-                    end
+                return roomNodes
+            end
 
-                    -- =================================================
-                    -- GET CURRENT ROOMS
-                    -- =================================================
+            local function BuildRoute()
+                table.clear(nodes)
 
-                    local entityRoom =
-                        GetRoomAtPoint(
-                            model:GetPivot().Position
+                nodeIndex = 1
+
+                local entityRoom =
+                    GetRoomAtPoint(
+                        model:GetPivot().Position
+                    )
+
+                local playerRoom =
+                    GetPlayerRoom()
+
+                if not entityRoom
+                    or not playerRoom
+                then
+                    return
+                end
+
+                local entityNumber =
+                    tonumber(entityRoom.Name)
+
+                local playerNumber =
+                    tonumber(playerRoom.Name)
+
+                if not entityNumber
+                    or not playerNumber
+                then
+                    return
+                end
+
+                currentTargetRoom =
+                    playerRoom
+
+                if entityNumber == playerNumber then
+                    return
+                end
+
+                local step = (playerNumber > entityNumber) and 1 or -1
+                local roomNumber = entityNumber
+
+                while roomNumber ~= playerNumber do
+                    local room =
+                        CurrentRooms:FindFirstChild(
+                            tostring(roomNumber)
                         )
 
-                    local playerRoom =
-                        GetPlayerRoom()
+                    if room then
+                        local roomNodes =
+                            GetNodesFromRoom(room)
 
-                    -- =================================================
-                    -- SAME ROOM = WALL CHASE
-                    -- =================================================
-
-                    if entityRoom
-                        and playerRoom
-                        and entityRoom == playerRoom
-                    then
-
-                        if not directChasing then
-
-                            directChasing = true
-
-                            -- Throw away the current V3 node route.
-                            table.clear(nodes)
-                            nodeIndex = 1
-
+                        if step == -1 then
+                            for i = #roomNodes, 1, -1 do
+                                table.insert(nodes, roomNodes[i])
+                            end
+                        else
+                            for _, node in ipairs(roomNodes) do
+                                table.insert(nodes, node)
+                            end
                         end
+                    end
 
-                        ChasePlayer(dt)
+                    roomNumber = roomNumber + step
+                end
 
+                local finalRoom =
+                    CurrentRooms:FindFirstChild(
+                        tostring(playerNumber)
+                    )
+
+                if finalRoom then
+                    local finalNodes =
+                        GetNodesFromRoom(finalRoom)
+
+                    if step == -1 then
+                        for i = #finalNodes, 1, -1 do
+                            table.insert(nodes, finalNodes[i])
+                        end
                     else
+                        for _, node in ipairs(finalNodes) do
+                            table.insert(nodes, node)
+                        end
+                    end
+                end
+            end
 
-                        -- =============================================
-                        -- PLAYER IS IN ANOTHER ROOM
-                        -- =============================================
+            local function ChasePlayer(dt)
+                local char =
+                    LocalPlayer.Character
 
-                        if directChasing then
+                local root =
+                    char
+                    and (
+                        char.PrimaryPart
+                        or char:FindFirstChild(
+                            "HumanoidRootPart"
+                        )
+                    )
 
-                            directChasing = false
+                if not root then
+                    return
+                end
 
-                            -- Player entered a new room.
-                            -- Build a completely new route toward them.
-                            BuildRoute()
+                local targetPosition =
+                    root.Position
+                    + Vector3.new(
+                        0,
+                        heightOffset,
+                        0
+                    )
 
-                        elseif #nodes == 0 then
+                local pivot =
+                    model:GetPivot()
 
-                            -- Initial route.
-                            BuildRoute()
+                local difference =
+                    targetPosition
+                    - pivot.Position
 
+                local distance =
+                    difference.Magnitude
+
+                if distance <= 0.15 then
+                    return
+                end
+
+                local direction =
+                    difference.Unit
+
+                local movement =
+                    math.min(
+                        speed * dt,
+                        distance
+                    )
+
+                local newPosition =
+                    pivot.Position
+                    + direction * movement
+
+                local flatDirection =
+                    Vector3.new(
+                        direction.X,
+                        0,
+                        direction.Z
+                    )
+
+                if flatDirection.Magnitude > 0.001 then
+                    model:PivotTo(
+                        CFrame.lookAt(
+                            newPosition,
+                            newPosition
+                                + flatDirection
+                        )
+                    )
+                else
+                    local rotationOnly =
+                        pivot
+                        - pivot.Position
+
+                    model:PivotTo(
+                        CFrame.new(newPosition)
+                        * rotationOnly
+                    )
+                end
+            end
+
+            local function MoveToNode(node, dt)
+                if not node
+                    or not node.Parent
+                then
+                    return true
+                end
+
+                local targetPosition =
+                    node.Position
+
+                local pivot =
+                    model:GetPivot()
+
+                local difference =
+                    targetPosition
+                    - pivot.Position
+
+                local distance =
+                    difference.Magnitude
+
+                if distance <= 1.5 then
+                    return true
+                end
+
+                local direction =
+                    difference.Unit
+
+                local movement =
+                    math.min(
+                        speed * dt,
+                        distance
+                    )
+
+                local newPosition =
+                    pivot.Position
+                    + direction * movement
+
+                local flatDirection =
+                    Vector3.new(
+                        direction.X,
+                        0,
+                        direction.Z
+                    )
+
+                if flatDirection.Magnitude > 0.001 then
+                    model:PivotTo(
+                        CFrame.lookAt(
+                            newPosition,
+                            newPosition
+                                + flatDirection
+                        )
+                    )
+                else
+                    local rotationOnly =
+                        pivot
+                        - pivot.Position
+
+                    model:PivotTo(
+                        CFrame.new(newPosition)
+                        * rotationOnly
+                    )
+                end
+
+                return false
+            end
+
+            connection =
+                RunService.Heartbeat:Connect(
+                    function(dt)
+                        if not entity:IsAlive()
+                            or not model.Parent
+                        then
+                            connection:Disconnect()
+                            return
                         end
 
-                        -- =============================================
-                        -- FOLLOW V3 NODE ROUTE
-                        -- =============================================
+                        if model:GetAttribute(
+                            "BeingBanished"
+                        ) then
+                            return
+                        end
 
-                        if not directChasing
-                            and #nodes > 0
+                        local entityRoom =
+                            GetRoomAtPoint(
+                                model:GetPivot().Position
+                            )
+
+                        local playerRoom =
+                            GetPlayerRoom()
+
+                        if entityRoom
+                            and playerRoom
+                            and entityRoom == playerRoom
                         then
-
-                            local node =
-                                nodes[nodeIndex]
-
-                            if MoveToNode(
-                                node,
-                                dt
-                            ) then
-
-                                nodeIndex =
-                                    nodeIndex + 1
-
-                                if nodeIndex
-                                    > #nodes
-                                then
-
-                                    -- Route is finished.
-                                    -- Rebuild it toward the
-                                    -- player's latest room.
-                                    BuildRoute()
-
-                                end
-
+                            if not directChasing then
+                                directChasing = true
+                                table.clear(nodes)
+                                nodeIndex = 1
                             end
 
-                        end
+                            ChasePlayer(dt)
+                        else
+                            if directChasing then
+                                directChasing = false
+                                BuildRoute()
+                            elseif #nodes == 0 then
+                                BuildRoute()
+                            end
 
-                    end
+                            if not directChasing
+                                and #nodes > 0
+                            then
+                                local node =
+                                    nodes[nodeIndex]
 
-                    -- =================================================
-                    -- DESPAWN TIMER
-                    -- =================================================
+                                if MoveToNode(
+                                    node,
+                                    dt
+                                ) then
+                                    nodeIndex =
+                                        nodeIndex + 1
 
-                    if despawnTime > 0
-                        and (
-                            os.clock()
-                            - startTime
-                        ) >= despawnTime
-                    then
-
-                        connection:Disconnect()
-
-                        if not model:GetAttribute(
-                            "Despawning"
-                        ) then
-
-                            model:SetAttribute(
-                                "Despawning",
-                                true
-                            )
-
-                            task.spawn(
-                                entity.RunCallback,
-                                entity,
-                                "OnDespawning"
-                            )
-
-                            local sinkTarget =
-                                model:GetPivot().Position
-                                - Vector3.new(
-                                    0,
-                                    300,
-                                    0
-                                )
-
-                            local sinkConnection
-
-                            sinkConnection =
-                                RunService.Heartbeat:Connect(
-                                    function(dt2)
-
-                                        if not model.Parent then
-                                            sinkConnection:Disconnect()
-                                            return
-                                        end
-
-                                        local pivot =
-                                            model:GetPivot()
-
-                                        local difference =
-                                            sinkTarget
-                                            - pivot.Position
-
-                                        if difference.Magnitude <= 2 then
-
-                                            sinkConnection:Disconnect()
-
-                                            entity:Despawn()
-
-                                            return
-
-                                        end
-
-                                        model:PivotTo(
-                                            pivot
-                                            + difference.Unit
-                                            * math.min(
-                                                speed
-                                                    * dt2
-                                                    * 1.8,
-                                                difference.Magnitude
-                                            )
-                                        )
-
+                                    if nodeIndex
+                                        > #nodes
+                                    then
+                                        BuildRoute()
                                     end
-                                )
-
+                                end
+                            end
                         end
 
+                        if despawnTime > 0
+                            and (
+                                os.clock()
+                                - startTime
+                            ) >= despawnTime
+                        then
+                            connection:Disconnect()
+
+                            if not model:GetAttribute(
+                                "Despawning"
+                            ) then
+                                model:SetAttribute(
+                                    "Despawning",
+                                    true
+                                )
+
+                                task.spawn(
+                                    entity.RunCallback,
+                                    entity,
+                                    "OnDespawning"
+                                )
+
+                                local sinkTarget =
+                                    model:GetPivot().Position
+                                    - Vector3.new(
+                                        0,
+                                        300,
+                                        0
+                                    )
+
+                                local sinkConnection
+
+                                sinkConnection =
+                                    RunService.Heartbeat:Connect(
+                                        function(dt2)
+                                            if not model.Parent then
+                                                sinkConnection:Disconnect()
+                                                return
+                                            end
+
+                                            local pivot =
+                                                model:GetPivot()
+
+                                            local difference =
+                                                sinkTarget
+                                                - pivot.Position
+
+                                            if difference.Magnitude <= 2 then
+                                                sinkConnection:Disconnect()
+                                                entity:Despawn()
+                                                return
+                                            end
+
+                                            model:PivotTo(
+                                                pivot
+                                                + difference.Unit
+                                                * math.min(
+                                                    speed
+                                                        * dt2
+                                                        * 1.8,
+                                                    difference.Magnitude
+                                                )
+                                            )
+                                        end
+                                    )
+                            end
+                        end
                     end
+                )
+        end)
+    end
 
-                end
-            )
-
-    end)
-end
-  
     getgenv().VynixuEntitySpawnerV3 =      
         Brain      
   
     return entity  
-  
 end  
   
 --// current entity //--  
   
 function Brain.GetCurrentEntity()  
-  
     return CurrentEntity  
-  
 end  
   
 --// active state //--  
   
 function Brain.IsActive()  
-  
     return EntityActive  
-  
 end  
   
 --// despawn //--  
   
 function Brain.Despawn()  
-  
     local entity =      
         CurrentEntity      
   
     if entity then      
-  
         pcall(function()      
             entity:Despawn()      
         end)      
-  
     end      
   
     EntityActive = false      
-  
     CurrentEntity = nil  
-  
 end  
   
 --// global //--  
