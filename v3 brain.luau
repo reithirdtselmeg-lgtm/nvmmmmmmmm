@@ -22,7 +22,7 @@ local V2_URL = "https://raw.githubusercontent.com/reithirdtselmeg-lgtm/nvmmmmmmm
 --// external asset system //--  
   
 local ASSET_FOLDER =  
-    "V3EntityAssets"  
+    "V3Entities"  
   
 local ASSET_CLEANUP_DELAY = 10
   
