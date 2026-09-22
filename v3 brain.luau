@@ -17,8 +17,7 @@ local LocalPlayer = Players.LocalPlayer
   
 --// V2 SOURCE //--  
   
-local V2_URL =  
-    "https://gist.githubusercontent.com/reithirdtselmeg-lgtm/0f225198f5a454fbab1b16ffa052cd9d/raw/6a93182f55ea4b16ec7d3cf3e33b0911e80dee16/gistfile1.txt"  
+local V2_URL = "https://raw.githubusercontent.com/reithirdtselmeg-lgtm/nvmmmmmmmm/main/.github/workflows/v2vrainnnn.luau"  
   
 --// external asset system //--  
   
