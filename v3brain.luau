@@ -36,11 +36,11 @@ local ExternalAssetFunctions = {
 
 local function IsExternalUrl(value)
     return typeof(value) == "string"
-        and (value:match("^https://") or value:match("^http://")) \~= nil
+        and (value:match("^https://") or value:match("^http://")) ~= nil
 end
 
 local function GetExtension(url, fallback)
-    if typeof(url) \~= "string" then
+    if typeof(url) ~= "string" then
         return fallback
     end
 
@@ -122,7 +122,7 @@ local function DownloadExternalAsset(url, fallbackExtension)
         return game:HttpGet(url)
     end)
 
-    if not ok or typeof(data) \~= "string" or #data == 0 then
+    if not ok or typeof(data) ~= "string" or #data == 0 then
         warn("V3 Brain: failed to download external asset:\n" .. tostring(url))
         return nil, nil
     end
@@ -143,7 +143,7 @@ local function DownloadExternalAsset(url, fallbackExtension)
         return getcustomasset(path)
     end)
 
-    if not customOk or typeof(customAsset) \~= "string" or customAsset == "" then
+    if not customOk or typeof(customAsset) ~= "string" or customAsset == "" then
         SafeDeleteFile(path)
         warn("V3 Brain: getcustomasset failed:\n" .. path)
         return nil, nil
@@ -153,7 +153,7 @@ local function DownloadExternalAsset(url, fallbackExtension)
 end
 
 local function ResolveAsset(value, fallbackExtension, assetList)
-    if typeof(value) \~= "string" or value == "" then
+    if typeof(value) ~= "string" or value == "" then
         return value
     end
 
@@ -171,7 +171,7 @@ local function ResolveAsset(value, fallbackExtension, assetList)
 end
 
 local function CleanupAssetFiles(assetList)
-    if typeof(assetList) \~= "table" then
+    if typeof(assetList) ~= "table" then
         return
     end
 
@@ -309,6 +309,12 @@ end
 
     local patchedSource, matchCount = source:gsub('"OnReachNode"', '"OnReachedNode"')
 
+-- Force the sink to take exactly 5 seconds (300 studs / 5s = 60)
+patchedSource = patchedSource:gsub(
+    'EntityMoveTo%(model, model:GetPivot%(%) %- Vector3%.new%(0, 300, 0%), config%.Movement%.Speed%)',
+    'EntityMoveTo(model, model:GetPivot() - Vector3.new(0, 300, 0), 60)'
+)
+
     if matchCount == 0 then
         warn("V3 Brain: 'OnReachNode' -> 'OnReachedNode' patch matched 0 occurrences.")
     end
@@ -327,7 +333,7 @@ do
         return game:HttpGet(V2_URL)
     end)
 
-    if not ok or typeof(source) \~= "string" then
+    if not ok or typeof(source) ~= "string" then
         error("V3 Brain: failed to download V2 source.")
     end
 
@@ -359,11 +365,11 @@ do
         error("V3 Brain: patched V2 EXECUTION ERROR:\n" .. tostring(result))
     end
 
-    if typeof(result) \~= "table" then
+    if typeof(result) ~= "table" then
         error("V3 Brain: patched V2 returned " .. typeof(result) .. " instead of a table.")
     end
 
-    if typeof(result.Create) \~= "function" then
+    if typeof(result.Create) ~= "function" then
         error("V3 Brain: patched V2 loaded, but Create is missing.")
     end
 
@@ -414,7 +420,7 @@ local function GetColor(value)
         return value
     end
 
-    if typeof(value) \~= "string" then
+    if typeof(value) ~= "string" then
         return Color3.new(1, 1, 1)
     end
 
@@ -529,7 +535,7 @@ local function SetupFace(model, config)
     if not facePart then return end
 
     local faceId = config.FaceId
-    if typeof(faceId) \~= "string" or faceId == "" then return end
+    if typeof(faceId) ~= "string" or faceId == "" then return end
 
     local attachment = facePart:FindFirstChild("FaceAttachment")
     if not attachment then
@@ -558,12 +564,12 @@ end
 
 local function SetupAura(model, config)
     local root = model.PrimaryPart
-    if not root or typeof(config.Auras) \~= "table" or #config.Auras == 0 then
+    if not root or typeof(config.Auras) ~= "table" or #config.Auras == 0 then
         return
     end
 
     local firstAura = config.Auras[1]
-    if typeof(firstAura) \~= "table" or typeof(firstAura.Id) \~= "string" or firstAura.Id == "" then
+    if typeof(firstAura) ~= "table" or typeof(firstAura.Id) ~= "string" or firstAura.Id == "" then
         warn("V3 Brain: Aura #1 must have a valid Id.")
         return
     end
@@ -578,7 +584,7 @@ local function SetupAura(model, config)
 
     for index = 1, math.min(#config.Auras, 3) do
         local auraData = config.Auras[index]
-        if typeof(auraData) == "table" and typeof(auraData.Id) == "string" and auraData.Id \~= "" then
+        if typeof(auraData) == "table" and typeof(auraData.Id) == "string" and auraData.Id ~= "" then
             local attachmentName = "AuraAttachment" .. index
             local particleName = "AuraParticle" .. index
 
@@ -710,7 +716,7 @@ end
 --// sounds //--
 
 local function CreateSound(parent, soundId, volume, playbackSpeed, name, looped)
-    if not parent or typeof(soundId) \~= "string" or soundId == "" then
+    if not parent or typeof(soundId) ~= "string" or soundId == "" then
         return nil
     end
 
@@ -834,7 +840,7 @@ local function Preload(config)
     local assets = {}
 
     local function AddAsset(id, className)
-        if typeof(id) \~= "string" or id == "" then return end
+        if typeof(id) ~= "string" or id == "" then return end
 
         local asset = Instance.new(className)
         asset.Name = "V3Preload"
@@ -918,7 +924,7 @@ local function RunJumpscare(config)
     image.Parent = gui
 
     local sound
-    if typeof(data.Sound) == "string" and data.Sound \~= "" then
+    if typeof(data.Sound) == "string" and data.Sound ~= "" then
         sound = Instance.new("Sound")
         sound.Name = "JumpscareSound"
         sound.SoundId = data.Sound
@@ -1155,7 +1161,7 @@ end
 --// V3 FOLLOW PLAYER / NODE HYBRID //--
 
 local function StartHybridMovement(entity, config, spawnTime)
-    if not config.Movement or config.Movement.FollowPlayer \~= true then
+    if not config.Movement or config.Movement.FollowPlayer ~= true then
         return
     end
 
@@ -1315,7 +1321,7 @@ local function StartHybridMovement(entity, config, spawnTime)
 
         local roomNumber = startNumber
 
-        while roomNumber \~= targetNumber do
+        while roomNumber ~= targetNumber do
             local room = roomMap[roomNumber]
             if room then
                 local nodes = GetNodesFromRoom(room)
@@ -1422,7 +1428,7 @@ local function StartHybridMovement(entity, config, spawnTime)
             end
 
             -- DIFFERENT ROOM
-            if routeTargetRoom \~= playerRoomNumber then
+            if routeTargetRoom ~= playerRoomNumber then
                 route = BuildRoute(entityRoom, playerRoom)
                 routeIndex = 1
                 routeTargetRoom = playerRoomNumber
