@@ -164,7 +164,7 @@ local function DownloadExternalAsset(url, fallbackExtension)
 end
 
 local function ResolveAsset(value, fallbackExtension, assetList)
-    if typeof(value) \~= "string" or value == "" then
+    if typeof(value) ~= "string" or value == "" then
         return value
     end
 
@@ -343,7 +343,7 @@ do
         return game:HttpGet(V2_URL)
     end)
 
-    if not ok or typeof(source) \~= "string" then
+    if not ok or typeof(source) ~= "string" then
         error("V3 Brain: failed to download V2 source.")
     end
 
@@ -576,12 +576,12 @@ end
 
 local function SetupAura(model, config)
     local root = model.PrimaryPart
-    if not root or typeof(config.Auras) \~= "table" or #config.Auras == 0 then
+    if not root or typeof(config.Auras) ~= "table" or #config.Auras == 0 then
         return
     end
 
     local firstAura = config.Auras[1]
-    if typeof(firstAura) \~= "table" or typeof(firstAura.Id) \~= "string" or firstAura.Id == "" then
+    if typeof(firstAura) ~= "table" or typeof(firstAura.Id) ~= "string" or firstAura.Id == "" then
         warn("V3 Brain: Aura #1 must have a valid Id.")
         return
     end
@@ -728,7 +728,7 @@ end
 --// sounds //--
 
 local function CreateSound(parent, soundId, volume, playbackSpeed, name, looped)
-    if not parent or typeof(soundId) \~= "string" or soundId == "" then
+    if not parent or typeof(soundId) ~= "string" or soundId == "" then
         return nil
     end
 
@@ -1173,7 +1173,7 @@ end
 --// V3 FOLLOW PLAYER / NODE HYBRID //--
 
 local function StartHybridMovement(entity, config, spawnTime)
-    if not config.Movement or config.Movement.FollowPlayer \~= true then
+    if not config.Movement or config.Movement.FollowPlayer ~= true then
         return
     end
 
@@ -1743,7 +1743,7 @@ end
 --// SPAWN //--
 
 function Brain.Spawn(config)
-    if typeof(config) \~= "table" then
+    if typeof(config) ~= "table" then
         error("V3 Brain: Spawn requires a config table.")
     end
 
