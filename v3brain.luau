@@ -1,19 +1,7 @@
 --// V3 ENTITY BRAIN //--
 --// made by: 𝕝𝕦𝕟𝕒𝕣𝕓𝕣𝕖𝕓𝕖𝕒𝕦𝕥𝕪 𝕒𝕜𝕒 𝕖𝕝_𝕧𝕚𝕣𝕖𝕩𝕦𝕤!! //--
 
---// RETURN ONLY IF A VALID V3 BRAIN ALREADY EXISTS //--
 
-local ExistingV3 = getgenv().VynixuEntitySpawnerV3
-
-if ExistingV3
-    and typeof(ExistingV3) == "table"
-    and typeof(ExistingV3.Spawn) == "function"
-then
-    return ExistingV3
-end
-
--- Old/incomplete V3 instance detected.
--- Clear it so this version can initialize properly.
 getgenv().VynixuEntitySpawnerV3 = nil
 
 --// Services //--
