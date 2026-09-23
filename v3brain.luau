@@ -448,6 +448,8 @@ end
 
 --// state //--
 
+local Brain = {}
+
 local EntityActive = false
 local CurrentEntity = nil
 local EnvironmentEffect = nil
