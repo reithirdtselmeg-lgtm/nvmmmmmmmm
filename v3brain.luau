@@ -1183,32 +1183,48 @@ local function StartHybridMovement(entity, config, spawnTime)
     local despawnTime = tonumber(config.Movement.FollowPlayerDespawnTime) or 0
     spawnTime = tonumber(spawnTime) or os.clock()
 
+    --// PLAYER ROOT //--
+
     local function GetPlayerRoot()
         local character = player.Character
-        if not character then return nil end
-        return character:FindFirstChild("HumanoidRootPart") or character:FindFirstChild("Root")
+        if not character then
+            return nil
+        end
+
+        return character:FindFirstChild("HumanoidRootPart")
+            or character:FindFirstChild("Root")
     end
 
+    --// ROOM NUMBER //--
+
     local function GetRoomNumber(room)
-        if not room then return nil end
+        if not room then
+            return nil
+        end
+
         return tonumber(room.Name)
     end
+
+    --// ROOM AT POSITION //--
 
     local function GetRoomAtPosition(position)
         local rooms = CurrentRooms:GetChildren()
 
         table.sort(rooms, function(a, b)
-            return (tonumber(a.Name) or math.huge) < (tonumber(b.Name) or math.huge)
+            return (tonumber(a.Name) or math.huge)
+                < (tonumber(b.Name) or math.huge)
         end)
 
         for _, room in ipairs(rooms) do
             local roomNumber = tonumber(room.Name)
+
             if roomNumber then
                 local roomModel = room:FindFirstChild(room.Name)
+
                 if roomModel then
                     local params = RaycastParams.new()
                     params.FilterType = Enum.RaycastFilterType.Include
-                    params.FilterDescendantsInstances = { roomModel }
+                    params.FilterDescendantsInstances = {roomModel}
                     params.CollisionGroup = "BaseCheck"
 
                     local result = workspace:Raycast(
@@ -1227,13 +1243,19 @@ local function StartHybridMovement(entity, config, spawnTime)
         return nil
     end
 
+    --// PLAYER ROOM //--
+
     local function GetPlayerRoom()
         local root = GetPlayerRoot()
-        if not root then return nil end
+        if not root then
+            return nil
+        end
 
         local currentRoom = player:GetAttribute("CurrentRoom")
+
         if currentRoom then
             local room = CurrentRooms:FindFirstChild(tostring(currentRoom))
+
             if room then
                 return room
             end
@@ -1242,28 +1264,65 @@ local function StartHybridMovement(entity, config, spawnTime)
         return GetRoomAtPosition(root.Position)
     end
 
+    --// ENTITY ROOM //--
+
     local function GetEntityRoom()
-        if not model.Parent then return nil end
+        if not model.Parent then
+            return nil
+        end
+
         return GetRoomAtPosition(model:GetPivot().Position)
     end
 
+    --// LATEST LOADED ROOM //--
+
+    local function GetLatestRoom()
+        local latest = nil
+        local latestNumber = -math.huge
+
+        for _, room in ipairs(CurrentRooms:GetChildren()) do
+            local number = tonumber(room.Name)
+
+            if number and number > latestNumber then
+                latestNumber = number
+                latest = room
+            end
+        end
+
+        return latest
+    end
+
+    --// ROOM NODES //--
+
     local function GetNodesFromRoom(room)
         local nodes = {}
-        if not room then return nodes end
 
+        if not room then
+            return nodes
+        end
+
+        -- Room entrance
         local roomEntrance = room:FindFirstChild("RoomEntrance")
+
         if roomEntrance then
             local node = roomEntrance:Clone()
             node.Name = "0"
             node.CFrame -= Vector3.new(0, 3, 0)
+
             nodes[#nodes + 1] = node
         end
 
-        local nodesFolder = room:FindFirstChild("PathfindNodes") or room:FindFirstChild("Nodes")
+        -- Pathfind nodes
+        local nodesFolder =
+            room:FindFirstChild("PathfindNodes")
+            or room:FindFirstChild("Nodes")
+
         if nodesFolder then
             local roomNodes = nodesFolder:GetChildren()
+
             table.sort(roomNodes, function(a, b)
-                return (tonumber(a.Name) or math.huge) < (tonumber(b.Name) or math.huge)
+                return (tonumber(a.Name) or math.huge)
+                    < (tonumber(b.Name) or math.huge)
             end)
 
             for _, node in ipairs(roomNodes) do
@@ -1271,58 +1330,87 @@ local function StartHybridMovement(entity, config, spawnTime)
             end
         end
 
+        -- Room exit
         local roomExit = room:FindFirstChild("RoomExit")
+
         if roomExit then
-            local index = #nodes + 1
             local node = roomExit:Clone()
-            node.Name = tostring(index)
+            node.Name = tostring(#nodes + 1)
             node.CFrame -= Vector3.new(0, 3, 0)
+
             nodes[#nodes + 1] = node
         end
 
         return nodes
     end
 
+    --// ORDERED ROOMS //--
+
     local function GetOrderedRooms()
         local rooms = CurrentRooms:GetChildren()
+
         table.sort(rooms, function(a, b)
-            return (tonumber(a.Name) or math.huge) < (tonumber(b.Name) or math.huge)
+            return (tonumber(a.Name) or math.huge)
+                < (tonumber(b.Name) or math.huge)
         end)
+
         return rooms
     end
 
-    -- FIXED: uses config.HeightOffset
+    --// NODE POSITION //--
+
     local function GetNodePosition(node)
         return (
-            node.CFrame + Vector3.new(0, 3 + (config.HeightOffset or 0), 0)
+            node.CFrame
+            + Vector3.new(
+                0,
+                3 + (config.HeightOffset or 0),
+                0
+            )
         ).Position
     end
 
+    --// BUILD ROUTE //--
+
     local function BuildRoute(startRoom, targetRoom)
         local route = {}
-        if not startRoom or not targetRoom then return route end
+
+        if not startRoom or not targetRoom then
+            return route
+        end
 
         local startNumber = GetRoomNumber(startRoom)
         local targetNumber = GetRoomNumber(targetRoom)
 
-        if not startNumber or not targetNumber then return route end
-        if startNumber == targetNumber then return route end
+        if not startNumber or not targetNumber then
+            return route
+        end
+
+        if startNumber == targetNumber then
+            return route
+        end
 
         local rooms = GetOrderedRooms()
-        local step = (targetNumber > startNumber) and 1 or -1
-
         local roomMap = {}
+
         for _, room in ipairs(rooms) do
             local number = GetRoomNumber(room)
+
             if number then
                 roomMap[number] = room
             end
         end
 
+        local step = targetNumber > startNumber and 1 or -1
         local roomNumber = startNumber
 
-        while roomNumber ~= targetNumber do
+        -- IMPORTANT:
+        -- this uses <= / >= logic so the TARGET ROOM
+        -- is included instead of stopping one room early.
+
+        while true do
             local room = roomMap[roomNumber]
+
             if room then
                 local nodes = GetNodesFromRoom(room)
 
@@ -1337,14 +1425,22 @@ local function StartHybridMovement(entity, config, spawnTime)
                 end
             end
 
+            if roomNumber == targetNumber then
+                break
+            end
+
             roomNumber += step
         end
 
         return route
     end
 
+    --// DIRECT MOVEMENT //--
+
     local function MoveToward(targetPosition, deltaTime)
-        if not model.Parent then return true end
+        if not model.Parent then
+            return true
+        end
 
         local pivot = model:GetPivot()
         local currentPosition = pivot.Position
@@ -1353,202 +1449,305 @@ local function StartHybridMovement(entity, config, spawnTime)
 
         if distance <= 0.15 then
             model:PivotTo(
-                CFrame.new(targetPosition) * (pivot - pivot.Position)
+                CFrame.new(targetPosition)
+                * (pivot - pivot.Position)
             )
+
             return true
         end
 
         local direction = difference.Unit
         local step = math.min(speed * deltaTime, distance)
-        local newPosition = currentPosition + direction * step
-        local flatDirection = Vector3.new(direction.X, 0, direction.Z)
+
+        local newPosition =
+            currentPosition
+            + direction * step
+
+        local flatDirection =
+            Vector3.new(direction.X, 0, direction.Z)
 
         local newCFrame
+
         if flatDirection.Magnitude > 0.001 then
-            newCFrame = CFrame.lookAt(newPosition, newPosition + flatDirection)
+            newCFrame = CFrame.lookAt(
+                newPosition,
+                newPosition + flatDirection
+            )
         else
-            newCFrame = CFrame.new(newPosition) * (pivot - pivot.Position)
+            newCFrame =
+                CFrame.new(newPosition)
+                * (pivot - pivot.Position)
         end
 
         model:PivotTo(newCFrame)
+
         return false
     end
 
-    task.spawn(function()
-        local connection
-        local route = {}
-        local routeIndex = 1
-        local routeTargetRoom = nil
+--// HYBRID LOOP //--
 
-        connection = RunService.Heartbeat:Connect(function(deltaTime)
-            if not model.Parent then
-                connection:Disconnect()
-                return
-            end
+task.spawn(function()
 
-            -- DESPAWN TIMER (now uses reliable spawnTime)
-            if despawnTime > 0 and (os.clock() - spawnTime) >= despawnTime then
-                if not model:GetAttribute("Despawning") then
-                    model:SetAttribute("Despawning", true)
+    local connection
 
-                    task.spawn(entity.RunCallback, entity, "OnDespawning")
+    local route = {}
+    local routeIndex = 1
+
+    local lastPlayerRoomNumber = nil
+    local lastEntityRoomNumber = nil
+
+    local function ResetRoute()
+        table.clear(route)
+        routeIndex = 1
+    end
+
+    local function RebuildRoute(entityRoom, playerRoom)
+        ResetRoute()
+
+        if not entityRoom or not playerRoom then
+            return
+        end
+
+        route = BuildRoute(
+            entityRoom,
+            playerRoom
+        )
+
+        routeIndex = 1
+    end
+
+    connection = RunService.Heartbeat:Connect(function(deltaTime)
+
+        if not model.Parent then
+            connection:Disconnect()
+            return
+        end
+
+        --// DESPAWN TIMER //--
+
+        if despawnTime > 0
+            and (os.clock() - spawnTime) >= despawnTime
+        then
+
+            if not model:GetAttribute("Despawning") then
+
+                model:SetAttribute(
+                    "Despawning",
+                    true
+                )
+
+                task.spawn(function()
                     pcall(function()
-                        entity:Despawn()
+                        entity:RunCallback(
+                            "OnDespawning"
+                        )
                     end)
-                end
+                end)
 
-                connection:Disconnect()
+                pcall(function()
+                    entity:Despawn()
+                end)
+
+            end
+
+            connection:Disconnect()
+            return
+        end
+
+        --// GET PLAYER //--
+
+        local playerRoot = GetPlayerRoot()
+
+        if not playerRoot then
+            return
+        end
+
+        --// GET ROOMS //--
+
+        local playerRoom = GetPlayerRoom()
+        local entityRoom = GetEntityRoom()
+
+        if not entityRoom then
+            return
+        end
+
+        local entityRoomNumber =
+            GetRoomNumber(entityRoom)
+
+        if not entityRoomNumber then
+            return
+        end
+
+        local playerRoomNumber =
+            GetRoomNumber(playerRoom)
+
+        --==================================================
+        -- PLAYER ROOM UNKNOWN
+        --==================================================
+
+        if not playerRoomNumber then
+
+            -- Try the newest loaded room.
+            playerRoom = GetLatestRoom()
+
+            if playerRoom then
+                playerRoomNumber =
+                    GetRoomNumber(playerRoom)
+            end
+
+            if not playerRoomNumber then
                 return
             end
+        end
 
-            local playerRoot = GetPlayerRoot()
-            if not playerRoot then return end
+        --==================================================
+        -- PLAYER IS IN OUR ROOM
+        --==================================================
 
-            local playerRoom = GetPlayerRoom()
-            local entityRoom = GetEntityRoom()
+        if entityRoomNumber == playerRoomNumber then
 
-            if not playerRoom or not entityRoom then
-                return
-            end
+            -- The route is no longer useful.
+            ResetRoute()
 
-            local playerRoomNumber = GetRoomNumber(playerRoom)
-            local entityRoomNumber = GetRoomNumber(entityRoom)
+            lastPlayerRoomNumber =
+                playerRoomNumber
 
-            if not playerRoomNumber or not entityRoomNumber then
-                return
-            end
+            lastEntityRoomNumber =
+                entityRoomNumber
 
-            -- SAME ROOM = DIRECT CHASE
-            if playerRoomNumber == entityRoomNumber then
-                route = {}
-                routeIndex = 1
-                routeTargetRoom = nil
-                MoveToward(playerRoot.Position, deltaTime)
-                return
-            end
+            -- DIRECT TARGET LOCK.
+            --
+            -- This is recalculated EVERY HEARTBEAT,
+            -- so the entity doesn't lazily walk toward
+            -- where the player used to be.
 
-            -- DIFFERENT ROOM
-            if routeTargetRoom ~= playerRoomNumber then
-                route = BuildRoute(entityRoom, playerRoom)
-                routeIndex = 1
-                routeTargetRoom = playerRoomNumber
-            end
+            MoveToward(
+                playerRoot.Position,
+                deltaTime
+            )
 
-            if #route == 0 then
-                return
-            end
+            return
+        end
+
+        --==================================================
+        -- PLAYER IS IN ANOTHER ROOM
+        --==================================================
+
+        local roomChanged =
+            lastPlayerRoomNumber ~= playerRoomNumber
+
+        local entityChanged =
+            lastEntityRoomNumber ~= entityRoomNumber
+
+        -- Rebuild whenever either side changes rooms.
+        if roomChanged
+            or entityChanged
+            or routeIndex > #route
+        then
+
+            RebuildRoute(
+                entityRoom,
+                playerRoom
+            )
+
+            lastPlayerRoomNumber =
+                playerRoomNumber
+
+            lastEntityRoomNumber =
+                entityRoomNumber
+        end
+
+        --==================================================
+        -- NO ROUTE
+        --==================================================
+
+        if #route == 0 then
+
+            -- Don't just stand there.
+            -- Try heading directly toward the player
+            -- until a valid room route becomes available.
+
+            MoveToward(
+                playerRoot.Position,
+                deltaTime
+            )
+
+            return
+        end
+
+        --==================================================
+        -- CURRENT NODE
+        --==================================================
+
+        local node = route[routeIndex]
+
+        if not node then
+
+            RebuildRoute(
+                entityRoom,
+                playerRoom
+            )
+
+            return
+        end
+
+        --==================================================
+        -- NODE TARGET
+        --==================================================
+
+        local targetPosition =
+            GetNodePosition(node)
+
+        local reached =
+            MoveToward(
+                targetPosition,
+                deltaTime
+            )
+
+        if reached then
+
+            pcall(function()
+                entity:RunCallback(
+                    "OnReachedNode",
+                    node
+                )
+            end)
+
+            routeIndex += 1
+
+            -- If this was the final node, immediately
+            -- rebuild instead of waiting for another
+            -- room transition to wake the entity up.
 
             if routeIndex > #route then
-                route = {}
-                routeIndex = 1
-                routeTargetRoom = nil
-                return
-            end
 
-            local node = route[routeIndex]
-            if not node then
-                routeIndex += 1
-                return
-            end
+                RebuildRoute(
+                    entityRoom,
+                    playerRoom
+                )
 
-            local targetPosition = GetNodePosition(node)
-            local reached = MoveToward(targetPosition, deltaTime)
-
-            if reached then
-                pcall(function()
-                   entity:RunCallback("OnReachedNode", node)
-                end)
-                routeIndex += 1
             end
-        end)
+        end
 
-        task.spawn(function()
-            while model.Parent and entity:IsAlive() do
-                task.wait(0.25)
-            end
-
-            if connection then
-                connection:Disconnect()
-            end
-        end)
     end)
-end
 
---// V3 SPAWN //--
-
-local Brain = {}
-
-function Brain.Spawn(config)
-    assert(type(config) == "table", "V3 Brain: Config must be a table.")
-
-    if EntityActive and CurrentEntity then
-        pcall(function()
-            if CurrentEntity:IsAlive() then
-                CurrentEntity:Despawn()
-            else
-                StopAllActiveSounds()
-            end
-        end)
-    else
-        StopAllActiveSounds()
-    end
-
-    EntityActive = false
-    CurrentEntity = nil
-
-    local assetList = ResolveConfigAssets(config)
-
-    local spawnState = {
-        Time = nil
-    }
+    --// CLEANUP //--
 
     task.spawn(function()
-        Preload(config)
+
+        while model.Parent
+            and entity:IsAlive()
+        do
+            task.wait(0.25)
+        end
+
+        if connection then
+            connection:Disconnect()
+        end
+
     end)
 
-    local model = PrepareModel(config)
-    local v2Config = BuildV2Config(config, model)
-
-    local ok, entity = pcall(function()
-        return Original:Create(v2Config)
-    end)
-
-    if not ok or not entity then
-        SafeDestroy(model)
-        CleanupAssetFiles(assetList)
-        error("V3 Brain: V2 Create failed: " .. tostring(entity))
-    end
-
-    SetupCallbacks(entity, config, assetList, spawnState)
-
-    local runOk, runError = pcall(function()
-        entity:Run(false)
-    end)
-
-    if not runOk then
-        pcall(function()
-            entity:Despawn()
-        end)
-        SafeDestroy(model)
-
-        task.delay(ASSET_CLEANUP_DELAY, function()
-            CleanupAssetFiles(assetList)
-        end)
-
-        error("V3 Brain: V2 Run failed: " .. tostring(runError))
-    end
-
-    -- Start hybrid AFTER Run, using a safe fallback for the timestamp
-    if config.Movement and config.Movement.FollowPlayer == true then
-        -- Give OnSpawned a tiny moment to set the real time, then fall back
-        task.defer(function()
-            StartHybridMovement(
-                entity,
-                config,
-                spawnState.Time or os.clock()
-            )
-        end)
-    end
+end)
 
     return entity
 end
