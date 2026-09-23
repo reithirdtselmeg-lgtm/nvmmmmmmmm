@@ -1,9 +1,20 @@
 --// V3 ENTITY BRAIN //--
 --// made by: 𝕝𝕦𝕟𝕒𝕣𝕓𝕣𝕖𝕓𝕖𝕒𝕦𝕥𝕪 𝕒𝕜𝕒 𝕖𝕝_𝕧𝕚𝕣𝕖𝕩𝕦𝕤!! //--
 
-if getgenv().VynixuEntitySpawnerV3 then
-    return getgenv().VynixuEntitySpawnerV3
+--// RETURN ONLY IF A VALID V3 BRAIN ALREADY EXISTS //--
+
+local ExistingV3 = getgenv().VynixuEntitySpawnerV3
+
+if ExistingV3
+    and typeof(ExistingV3) == "table"
+    and typeof(ExistingV3.Spawn) == "function"
+then
+    return ExistingV3
 end
+
+-- Old/incomplete V3 instance detected.
+-- Clear it so this version can initialize properly.
+getgenv().VynixuEntitySpawnerV3 = nil
 
 --// Services //--
 
@@ -1372,70 +1383,133 @@ local function StartHybridMovement(entity, config, spawnTime)
         ).Position
     end
 
-    --// BUILD ROUTE //--
+--// BUILD ROUTE //--
 
-    local function BuildRoute(startRoom, targetRoom)
-        local route = {}
+local function BuildRoute(startRoom, targetRoom, entityPosition)
+    local route = {}
 
-        if not startRoom or not targetRoom then
-            return route
-        end
-
-        local startNumber = GetRoomNumber(startRoom)
-        local targetNumber = GetRoomNumber(targetRoom)
-
-        if not startNumber or not targetNumber then
-            return route
-        end
-
-        if startNumber == targetNumber then
-            return route
-        end
-
-        local rooms = GetOrderedRooms()
-        local roomMap = {}
-
-        for _, room in ipairs(rooms) do
-            local number = GetRoomNumber(room)
-
-            if number then
-                roomMap[number] = room
-            end
-        end
-
-        local step = targetNumber > startNumber and 1 or -1
-        local roomNumber = startNumber
-
-        -- IMPORTANT:
-        -- this uses <= / >= logic so the TARGET ROOM
-        -- is included instead of stopping one room early.
-
-        while true do
-            local room = roomMap[roomNumber]
-
-            if room then
-                local nodes = GetNodesFromRoom(room)
-
-                if step > 0 then
-                    for _, node in ipairs(nodes) do
-                        route[#route + 1] = node
-                    end
-                else
-                    for i = #nodes, 1, -1 do
-                        route[#route + 1] = nodes[i]
-                    end
-                end
-            end
-
-            if roomNumber == targetNumber then
-                break
-            end
-
-            roomNumber += step
-        end
-
+    if not startRoom or not targetRoom then
         return route
     end
+
+    local startNumber = GetRoomNumber(startRoom)
+    local targetNumber = GetRoomNumber(targetRoom)
+
+    if not startNumber or not targetNumber then
+        return route
+    end
+
+    if startNumber == targetNumber then
+        return route
+    end
+
+    local rooms = GetOrderedRooms()
+    local roomMap = {}
+
+    for _, room in ipairs(rooms) do
+        local number = GetRoomNumber(room)
+
+        if number then
+            roomMap[number] = room
+        end
+    end
+
+    local step =
+        targetNumber > startNumber
+        and 1
+        or -1
+
+    --==================================================
+    -- STARTING ROOM
+    --==================================================
+
+    local firstRoom = roomMap[startNumber]
+
+    if firstRoom then
+
+        local nodes = GetNodesFromRoom(firstRoom)
+
+        if #nodes > 0 then
+
+            local nearestIndex = 1
+
+            if entityPosition then
+
+                local nearestDistance = math.huge
+
+                for i, node in ipairs(nodes) do
+
+                    local nodePosition =
+                        GetNodePosition(node)
+
+                    local distance =
+                        (nodePosition - entityPosition).Magnitude
+
+                    if distance < nearestDistance then
+                        nearestDistance = distance
+                        nearestIndex = i
+                    end
+                end
+
+            end
+
+            -- Forward
+            if step > 0 then
+
+                for i = nearestIndex, #nodes do
+                    route[#route + 1] = nodes[i]
+                end
+
+            -- Reverse
+            else
+
+                for i = nearestIndex, 1, -1 do
+                    route[#route + 1] = nodes[i]
+                end
+
+            end
+        end
+    end
+
+    --==================================================
+    -- FOLLOWING ROOMS
+    --==================================================
+
+    local roomNumber = startNumber + step
+
+    while true do
+
+        local room = roomMap[roomNumber]
+
+        if room then
+
+            local nodes =
+                GetNodesFromRoom(room)
+
+            if step > 0 then
+
+                for _, node in ipairs(nodes) do
+                    route[#route + 1] = node
+                end
+
+            else
+
+                for i = #nodes, 1, -1 do
+                    route[#route + 1] = nodes[i]
+                end
+
+            end
+        end
+
+        if roomNumber == targetNumber then
+            break
+        end
+
+        roomNumber += step
+    end
+
+    return route
+end
 
     --// DIRECT MOVEMENT //--
 
@@ -1511,9 +1585,10 @@ task.spawn(function()
         end
 
         route = BuildRoute(
-            entityRoom,
-            playerRoom
-        )
+    entityRoom,
+    playerRoom,
+    model:GetPivot().Position
+)
 
         routeIndex = 1
     end
@@ -1750,6 +1825,78 @@ task.spawn(function()
     end)
 
 end)
+
+    return entity
+end
+
+--// SPAWN //--
+
+function Brain.Spawn(config)
+    if typeof(config) ~= "table" then
+        error("V3 Brain: Spawn requires a config table.")
+    end
+
+    -- Prevent multiple active entities.
+    if CurrentEntity then
+        pcall(function()
+            CurrentEntity:Despawn()
+        end)
+
+        CurrentEntity = nil
+        EntityActive = false
+    end
+
+    -- Prepare local model.
+    local model = PrepareModel(config)
+
+    -- Resolve external images/sounds.
+    local assetList = ResolveConfigAssets(config)
+
+    -- Convert V3 config into the V2 format.
+    local v2Config = BuildV2Config(
+        config,
+        model
+    )
+
+    -- Create the V2 entity.
+    local ok, entity = pcall(function()
+        return Original:Create(v2Config)
+    end)
+
+    if not ok or not entity then
+        CleanupAssetFiles(assetList)
+
+        error(
+            "V3 Brain: V2 Create failed:\n"
+            .. tostring(entity)
+        )
+    end
+
+    -- Store callbacks.
+    local spawnState = {
+        Time = os.clock()
+    }
+
+    SetupCallbacks(
+        entity,
+        config,
+        assetList,
+        spawnState
+    )
+
+    -- Make sure our model reference is available.
+    model = entity.Model or entity.model or model
+
+    -- Start the V3 hybrid movement system.
+    if config.Movement
+        and config.Movement.FollowPlayer == true
+    then
+        StartHybridMovement(
+            entity,
+            config,
+            spawnState.Time
+        )
+    end
 
     return entity
 end
