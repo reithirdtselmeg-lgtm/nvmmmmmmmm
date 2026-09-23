@@ -5,8 +5,6 @@ if getgenv().VynixuEntitySpawnerV3 then
     return getgenv().VynixuEntitySpawnerV3
 end
 
-local Brain = {}
-
 --// Services //--
 
 local Players = game:GetService("Players")
@@ -25,7 +23,7 @@ local V2_URL =
 --// external asset system //--
 
 local ASSET_FOLDER = "V3Entities"
-local ASSET_CLEANUP_DELAY = 10
+local ASSET_CLEANUP_DELAY = 20          -- matches your loader comment
 
 local ExternalAssetFunctions = {
     HttpGet = type(game.HttpGet) == "function",
@@ -38,10 +36,7 @@ local ExternalAssetFunctions = {
 
 local function IsExternalUrl(value)
     return typeof(value) == "string"
-        and (
-            value:match("^https://")
-            or value:match("^http://")
-        ) \~= nil
+        and (value:match("^https://") or value:match("^http://")) \~= nil
 end
 
 local function GetExtension(url, fallback)
@@ -102,11 +97,7 @@ local function GenerateAssetPath(url, extension)
         .. "_"
         .. tostring(math.floor(os.clock() * 100000))
 
-    return ASSET_FOLDER
-        .. "/V3_"
-        .. randomPart
-        .. "."
-        .. extension
+    return ASSET_FOLDER .. "/V3_" .. randomPart .. "." .. extension
 end
 
 local function DownloadExternalAsset(url, fallbackExtension)
@@ -348,8 +339,6 @@ do
         error("V3 Brain: failed to patch V2 movement:\n" .. tostring(patchedSource))
     end
 
-    --// compile V2 //--
-
     local compileOk, V2Function = pcall(function()
         local fn, err = loadstring(patchedSource)
         if not fn then
@@ -361,8 +350,6 @@ do
     if not compileOk then
         error(tostring(V2Function))
     end
-
-    --// execute V2 //--
 
     local runOk, result = pcall(function()
         return V2Function()
@@ -910,8 +897,6 @@ local function RunJumpscare(config)
     gui.DisplayOrder = 999999
     gui.Parent = playerGui
 
-    --// FLASH //--
-
     local flash = Instance.new("Frame")
     flash.Name = "Flash"
     flash.Size = UDim2.fromScale(4, 4)
@@ -919,8 +904,6 @@ local function RunJumpscare(config)
     flash.BackgroundTransparency = 0
     flash.BorderSizePixel = 0
     flash.Parent = gui
-
-    --// FACE //--
 
     local image = Instance.new("ImageLabel")
     image.Name = "Face"
@@ -933,8 +916,6 @@ local function RunJumpscare(config)
     image.Size = UDim2.fromScale(startSize, startSize)
     image.Image = data.Image or config.FaceId
     image.Parent = gui
-
-    --// SOUND //--
 
     local sound
     if typeof(data.Sound) == "string" and data.Sound \~= "" then
@@ -955,8 +936,6 @@ local function RunJumpscare(config)
     end
 
     local duration = math.max(data.Duration or 0.6, 0.05)
-
-    --// FLASH //--
 
     if data.FlashEnabled then
         local flashColor = GetColor(data.FlashColor)
@@ -985,8 +964,6 @@ local function RunJumpscare(config)
         flash.BackgroundTransparency = 1
     end
 
-    --// FACE GROW //--
-
     local wiggleAngle = data.WiggleAngle or 15
 
     TweenService:Create(
@@ -994,8 +971,6 @@ local function RunJumpscare(config)
         TweenInfo.new(duration, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out),
         { Size = UDim2.fromScale(1, 1) }
     ):Play()
-
-    --// WIGGLE //--
 
     task.spawn(function()
         local startTime = os.clock()
@@ -1024,7 +999,7 @@ local function RunJumpscare(config)
     SafeDestroy(gui)
 end
 
---// V3 → V2 config //--
+--// V3 → V2 config (now safe) //--
 
 local function BuildV2Config(config, model)
     return {
@@ -1034,52 +1009,52 @@ local function BuildV2Config(config, model)
             HeightOffset = config.HeightOffset or 0
         },
         Movement = {
-            Speed = config.Movement and config.Movement.Speed or 100,
-            Delay = config.Movement and config.Movement.Delay or 0,
-            Reversed = config.Movement and config.Movement.Reversed or false,
-            FollowPlayer = config.Movement and config.Movement.FollowPlayer == true,
-            FollowPlayerDespawnTime = config.Movement and config.Movement.FollowPlayerDespawnTime or 0
+            Speed = (config.Movement and config.Movement.Speed) or 100,
+            Delay = (config.Movement and config.Movement.Delay) or 0,
+            Reversed = (config.Movement and config.Movement.Reversed) or false,
+            FollowPlayer = (config.Movement and config.Movement.FollowPlayer) == true,
+            FollowPlayerDespawnTime = (config.Movement and config.Movement.FollowPlayerDespawnTime) or 0
         },
         Damage = {
-            Enabled = config.Damage and config.Damage.Enabled or false,
-            IgnoreHiding = config.Damage and config.Damage.IgnoreHiding or false,
-            Range = config.Damage and config.Damage.Range or 10,
-            Amount = config.Damage and config.Damage.Amount or 100
+            Enabled = (config.Damage and config.Damage.Enabled) or false,
+            IgnoreHiding = (config.Damage and config.Damage.IgnoreHiding) or false,
+            Range = (config.Damage and config.Damage.Range) or 10,
+            Amount = (config.Damage and config.Damage.Amount) or 100
         },
         Lights = {
             Flicker = {
-                Enabled = config.Lights and config.Lights.Flicker and config.Lights.Flicker.Enabled or false,
-                Duration = config.Lights and config.Lights.Flicker and config.Lights.Flicker.Duration or 1
+                Enabled = (config.Lights and config.Lights.Flicker and config.Lights.Flicker.Enabled) or false,
+                Duration = (config.Lights and config.Lights.Flicker and config.Lights.Flicker.Duration) or 1
             },
-            Shatter = config.Lights and config.Lights.Shatter or false,
-            Repair = config.Lights and config.Lights.Repair or false
+            Shatter = (config.Lights and config.Lights.Shatter) or false,
+            Repair = (config.Lights and config.Lights.Repair) or false
         },
         Earthquake = {
-            Enabled = config.Earthquake and config.Earthquake.Enabled or false
+            Enabled = (config.Earthquake and config.Earthquake.Enabled) or false
         },
         CameraShake = {
-            Enabled = config.CameraShake and config.CameraShake.Enabled or false,
-            Range = config.CameraShake and config.CameraShake.Range or 100,
-            Values = config.CameraShake and config.CameraShake.Values or {1.5, 20, 0.1, 1}
+            Enabled = (config.CameraShake and config.CameraShake.Enabled) or false,
+            Range = (config.CameraShake and config.CameraShake.Range) or 100,
+            Values = (config.CameraShake and config.CameraShake.Values) or {1.5, 20, 0.1, 1}
         },
         Crucifixion = {
-            Type = config.Crucifixion and config.Crucifixion.Type or "Custom",
-            Enabled = config.Crucifixion and config.Crucifixion.Enabled or false,
-            Range = config.Crucifixion and config.Crucifixion.Range or 15,
-            Resist = config.Crucifixion and config.Crucifixion.Resist or false,
-            Break = config.Crucifixion and config.Crucifixion.Break or false
+            Type = (config.Crucifixion and config.Crucifixion.Type) or "Custom",
+            Enabled = (config.Crucifixion and config.Crucifixion.Enabled) or false,
+            Range = (config.Crucifixion and config.Crucifixion.Range) or 15,
+            Resist = (config.Crucifixion and config.Crucifixion.Resist) or false,
+            Break = (config.Crucifixion and config.Crucifixion.Break) or false
         },
         Rebounding = {
-            Enabled = config.Rebounding and config.Rebounding.Enabled or false,
-            Type = config.Rebounding and config.Rebounding.Type or "Normal",
-            Min = config.Rebounding and config.Rebounding.Min or 1,
-            Max = config.Rebounding and config.Rebounding.Max or 1,
-            Delay = config.Rebounding and config.Rebounding.Delay or 2
+            Enabled = (config.Rebounding and config.Rebounding.Enabled) or false,
+            Type = (config.Rebounding and config.Rebounding.Type) or "Normal",
+            Min = (config.Rebounding and config.Rebounding.Min) or 1,
+            Max = (config.Rebounding and config.Rebounding.Max) or 1,
+            Delay = (config.Rebounding and config.Rebounding.Delay) or 2
         },
         Death = {
-            Type = config.Death and config.Death.Type or "Guiding",
-            Hints = config.Death and config.Death.Hints or {},
-            Cause = config.Death and config.Death.Cause or "An entity killed you."
+            Type = (config.Death and config.Death.Type) or "Guiding",
+            Hints = (config.Death and config.Death.Hints) or {},
+            Cause = (config.Death and config.Death.Cause) or "An entity killed you."
         }
     }
 end
@@ -1198,29 +1173,20 @@ local function StartHybridMovement(entity, config, spawnTime)
 
     local player = Players.LocalPlayer
 
-    --// SETTINGS //--
-
     local speed = tonumber(config.Movement.Speed) or 100
     local despawnTime = tonumber(config.Movement.FollowPlayerDespawnTime) or 0
     spawnTime = tonumber(spawnTime) or os.clock()
 
-    --// PLAYER ROOT //--
-
     local function GetPlayerRoot()
         local character = player.Character
         if not character then return nil end
-
         return character:FindFirstChild("HumanoidRootPart") or character:FindFirstChild("Root")
     end
-
-    --// ROOM NUMBER //--
 
     local function GetRoomNumber(room)
         if not room then return nil end
         return tonumber(room.Name)
     end
-
-    --// ROOM DETECTION //--
 
     local function GetRoomAtPosition(position)
         local rooms = CurrentRooms:GetChildren()
@@ -1232,26 +1198,28 @@ local function StartHybridMovement(entity, config, spawnTime)
         for _, room in ipairs(rooms) do
             local roomNumber = tonumber(room.Name)
             if roomNumber then
-                local params = RaycastParams.new()
-                params.FilterType = Enum.RaycastFilterType.Include
-                params.FilterDescendantsInstances = { room }
+                local roomModel = room:FindFirstChild(room.Name)
+                if roomModel then
+                    local params = RaycastParams.new()
+                    params.FilterType = Enum.RaycastFilterType.Include
+                    params.FilterDescendantsInstances = { roomModel }
+                    params.CollisionGroup = "BaseCheck"
 
-                local result = workspace:Raycast(
-                    position + Vector3.new(0, 10, 0),
-                    Vector3.new(0, -100, 0),
-                    params
-                )
+                    local result = workspace:Raycast(
+                        position + Vector3.new(0, 5, 0),
+                        Vector3.new(0, -100, 0),
+                        params
+                    )
 
-                if result then
-                    return room
+                    if result then
+                        return room
+                    end
                 end
             end
         end
 
         return nil
     end
-
-    --// PLAYER ROOM //--
 
     local function GetPlayerRoom()
         local root = GetPlayerRoot()
@@ -1268,20 +1236,15 @@ local function StartHybridMovement(entity, config, spawnTime)
         return GetRoomAtPosition(root.Position)
     end
 
-    --// ENTITY ROOM //--
-
     local function GetEntityRoom()
         if not model.Parent then return nil end
         return GetRoomAtPosition(model:GetPivot().Position)
     end
 
-    --// V2-STYLE ROOM NODES //--
-
     local function GetNodesFromRoom(room)
         local nodes = {}
         if not room then return nodes end
 
-        -- entrance
         local roomEntrance = room:FindFirstChild("RoomEntrance")
         if roomEntrance then
             local node = roomEntrance:Clone()
@@ -1290,8 +1253,7 @@ local function StartHybridMovement(entity, config, spawnTime)
             nodes[#nodes + 1] = node
         end
 
-        -- path nodes
-        local nodesFolder = room:FindFirstChild("Nodes") or room:FindFirstChild("PathfindNodes")
+        local nodesFolder = room:FindFirstChild("PathfindNodes") or room:FindFirstChild("Nodes")
         if nodesFolder then
             local roomNodes = nodesFolder:GetChildren()
             table.sort(roomNodes, function(a, b)
@@ -1303,7 +1265,6 @@ local function StartHybridMovement(entity, config, spawnTime)
             end
         end
 
-        -- exit
         local roomExit = room:FindFirstChild("RoomExit")
         if roomExit then
             local index = #nodes + 1
@@ -1316,8 +1277,6 @@ local function StartHybridMovement(entity, config, spawnTime)
         return nodes
     end
 
-    --// ORDERED ROOMS //--
-
     local function GetOrderedRooms()
         local rooms = CurrentRooms:GetChildren()
         table.sort(rooms, function(a, b)
@@ -1326,15 +1285,12 @@ local function StartHybridMovement(entity, config, spawnTime)
         return rooms
     end
 
-    --// NODE POSITION //--
-
+    -- FIXED: uses config.HeightOffset
     local function GetNodePosition(node)
         return (
             node.CFrame + Vector3.new(0, 3 + (config.HeightOffset or 0), 0)
         ).Position
     end
-
-    --// BUILD ROUTE //--
 
     local function BuildRoute(startRoom, targetRoom)
         local route = {}
@@ -1344,9 +1300,10 @@ local function StartHybridMovement(entity, config, spawnTime)
         local targetNumber = GetRoomNumber(targetRoom)
 
         if not startNumber or not targetNumber then return route end
+        if startNumber == targetNumber then return route end
 
         local rooms = GetOrderedRooms()
-        local step = (targetNumber >= startNumber) and 1 or -1
+        local step = (targetNumber > startNumber) and 1 or -1
 
         local roomMap = {}
         for _, room in ipairs(rooms) do
@@ -1358,7 +1315,7 @@ local function StartHybridMovement(entity, config, spawnTime)
 
         local roomNumber = startNumber
 
-        while true do
+        while roomNumber \~= targetNumber do
             local room = roomMap[roomNumber]
             if room then
                 local nodes = GetNodesFromRoom(room)
@@ -1374,14 +1331,11 @@ local function StartHybridMovement(entity, config, spawnTime)
                 end
             end
 
-            if roomNumber == targetNumber then break end
             roomNumber += step
         end
 
         return route
     end
-
-    --// MOVE ONE FRAME //--
 
     local function MoveToward(targetPosition, deltaTime)
         if not model.Parent then return true end
@@ -1391,7 +1345,7 @@ local function StartHybridMovement(entity, config, spawnTime)
         local difference = targetPosition - currentPosition
         local distance = difference.Magnitude
 
-        if distance <= 0.25 then
+        if distance <= 0.15 then
             model:PivotTo(
                 CFrame.new(targetPosition) * (pivot - pivot.Position)
             )
@@ -1414,8 +1368,6 @@ local function StartHybridMovement(entity, config, spawnTime)
         return false
     end
 
-    --// HYBRID CONTROLLER //--
-
     task.spawn(function()
         local connection
         local route = {}
@@ -1428,17 +1380,12 @@ local function StartHybridMovement(entity, config, spawnTime)
                 return
             end
 
-            -- DESPAWN TIMER
+            -- DESPAWN TIMER (now uses reliable spawnTime)
             if despawnTime > 0 and (os.clock() - spawnTime) >= despawnTime then
                 if not model:GetAttribute("Despawning") then
                     model:SetAttribute("Despawning", true)
 
-                    if type(entity.RunCallback) == "function" then
-                        pcall(function()
-                            entity:RunCallback("OnDespawning")
-                        end)
-                    end
-
+                    task.spawn(entity.RunCallback, entity, "OnDespawning")
                     pcall(function()
                         entity:Despawn()
                     end)
@@ -1448,7 +1395,6 @@ local function StartHybridMovement(entity, config, spawnTime)
                 return
             end
 
-            -- PLAYER
             local playerRoot = GetPlayerRoot()
             if not playerRoot then return end
 
@@ -1456,7 +1402,6 @@ local function StartHybridMovement(entity, config, spawnTime)
             local entityRoom = GetEntityRoom()
 
             if not playerRoom or not entityRoom then
-                MoveToward(playerRoot.Position, deltaTime)
                 return
             end
 
@@ -1467,34 +1412,47 @@ local function StartHybridMovement(entity, config, spawnTime)
                 return
             end
 
-            -- ROUTE REBUILD
-            if routeTargetRoom \~= playerRoomNumber or #route == 0 then
+            -- SAME ROOM = DIRECT CHASE
+            if playerRoomNumber == entityRoomNumber then
+                route = {}
+                routeIndex = 1
+                routeTargetRoom = nil
+                MoveToward(playerRoot.Position, deltaTime)
+                return
+            end
+
+            -- DIFFERENT ROOM
+            if routeTargetRoom \~= playerRoomNumber then
                 route = BuildRoute(entityRoom, playerRoom)
                 routeIndex = 1
                 routeTargetRoom = playerRoomNumber
             end
 
-            -- FOLLOW NODES
-            if #route > 0 and routeIndex <= #route then
-                local node = route[routeIndex]
-                if node then
-                    local targetPosition = GetNodePosition(node)
-                    local reached = MoveToward(targetPosition, deltaTime)
+            if #route == 0 then
+                return
+            end
 
-                    if reached then
-                        if type(entity.RunCallback) == "function" then
-                            pcall(function()
-                                entity:RunCallback("OnReachedNode", node)
-                            end)
-                        end
-                        routeIndex += 1
-                    end
-                else
-                    routeIndex += 1
-                end
-            else
-                -- Chase player directly when on final node
-                MoveToward(playerRoot.Position, deltaTime)
+            if routeIndex > #route then
+                route = {}
+                routeIndex = 1
+                routeTargetRoom = nil
+                return
+            end
+
+            local node = route[routeIndex]
+            if not node then
+                routeIndex += 1
+                return
+            end
+
+            local targetPosition = GetNodePosition(node)
+            local reached = MoveToward(targetPosition, deltaTime)
+
+            if reached then
+                pcall(function()
+                    entity:RunCallback(entity, "OnReachedNode", node)
+                end)
+                routeIndex += 1
             end
         end)
 
@@ -1510,48 +1468,84 @@ local function StartHybridMovement(entity, config, spawnTime)
     end)
 end
 
---// V3 CONSTRUCTOR //--
+--// V3 SPAWN //--
 
-function Brain.Create(config)
-    assert(type(config) == "table", "V3 Brain: config table expected")
+local Brain = {}
+
+function Brain.Spawn(config)
+    assert(type(config) == "table", "V3 Brain: Config must be a table.")
+
+    if EntityActive and CurrentEntity then
+        pcall(function()
+            if CurrentEntity:IsAlive() then
+                CurrentEntity:Despawn()
+            else
+                StopAllActiveSounds()
+            end
+        end)
+    else
+        StopAllActiveSounds()
+    end
+
+    EntityActive = false
+    CurrentEntity = nil
 
     local assetList = ResolveConfigAssets(config)
-    Preload(config)
+
+    local spawnState = {
+        Time = nil
+    }
+
+    task.spawn(function()
+        Preload(config)
+    end)
 
     local model = PrepareModel(config)
     local v2Config = BuildV2Config(config, model)
-    local entity = Original.Create(v2Config)
 
-    local spawnState = { Time = 0 }
+    local ok, entity = pcall(function()
+        return Original.Create(v2Config)   -- safer than :Create
+    end)
+
+    if not ok or not entity then
+        SafeDestroy(model)
+        CleanupAssetFiles(assetList)
+        error("V3 Brain: V2 Create failed: " .. tostring(entity))
+    end
+
     SetupCallbacks(entity, config, assetList, spawnState)
 
-    if config.Movement and config.Movement.FollowPlayer then
-        -- Combine with the existing OnStartMoving so FarRushSound still plays
-        local previous = entity.Callbacks and entity.Callbacks.OnStartMoving
-        entity:SetCallback("OnStartMoving", function()
-            if type(previous) == "function" then
-                pcall(previous)
-            else
-                -- Fallback in case the internal callback table isn't exposed the same way
-                local model = entity.Model
-                if model then
-                    PlayRushSound(
-                        model,
-                        config.FarRushSound,
-                        config.FarVolume,
-                        config.FarPlaybackSpeed,
-                        "FarRush"
-                    )
-                end
-            end
-            StartHybridMovement(entity, config, spawnState.Time)
+    local runOk, runError = pcall(function()
+        entity:Run(false)
+    end)
+
+    if not runOk then
+        pcall(function()
+            entity:Despawn()
+        end)
+        SafeDestroy(model)
+
+        task.delay(ASSET_CLEANUP_DELAY, function()
+            CleanupAssetFiles(assetList)
+        end)
+
+        error("V3 Brain: V2 Run failed: " .. tostring(runError))
+    end
+
+    -- Start hybrid AFTER Run, using a safe fallback for the timestamp
+    if config.Movement and config.Movement.FollowPlayer == true then
+        -- Give OnSpawned a tiny moment to set the real time, then fall back
+        task.defer(function()
+            StartHybridMovement(
+                entity,
+                config,
+                spawnState.Time or os.clock()
+            )
         end)
     end
 
     return entity
 end
-
---// EXPORT METHODS //--
 
 function Brain.GetCurrentEntity()
     return CurrentEntity
@@ -1573,8 +1567,6 @@ function Brain.Despawn()
     EntityActive = false
     CurrentEntity = nil
 end
-
---// GLOBAL EXPORT //--
 
 getgenv().VynixuEntitySpawnerV3 = Brain
 
