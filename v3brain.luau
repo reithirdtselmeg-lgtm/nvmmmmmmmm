@@ -1,7 +1,19 @@
 --// V3 ENTITY BRAIN //--
 --// made by: 𝕝𝕦𝕟𝕒𝕣𝕓𝕣𝕖𝕓𝕖𝕒𝕦𝕥𝕪 𝕒𝕜𝕒 𝕖𝕝_𝕧𝕚𝕣𝕖𝕩𝕦𝕤!! //--
 
+--// RETURN ONLY IF A VALID V3 BRAIN ALREADY EXISTS //--
 
+local ExistingV3 = getgenv().VynixuEntitySpawnerV3
+
+if ExistingV3
+    and typeof(ExistingV3) == "table"
+    and typeof(ExistingV3.Spawn) == "function"
+then
+    return ExistingV3
+end
+
+-- Old/incomplete V3 instance detected.
+-- Clear it so this version can initialize properly.
 getgenv().VynixuEntitySpawnerV3 = nil
 
 --// Services //--
@@ -1872,21 +1884,39 @@ function Brain.Spawn(config)
         spawnState
     )
 
-    -- Make sure our model reference is available.
-    model = entity.Model or entity.model or model
+-- Make sure our model reference is available.
+model = entity.Model or entity.model or model
 
-    -- Start the V3 hybrid movement system.
-    if config.Movement
-        and config.Movement.FollowPlayer == true
-    then
-        StartHybridMovement(
-            entity,
-            config,
-            spawnState.Time
-        )
-    end
+-- IMPORTANT:
+-- V2:Create() only constructs the entity.
+-- V2:Run() actually places the model into Workspace
+-- and starts the entity lifecycle.
+local runOk, runError = pcall(function()
+    entity:Run()
+end)
 
-    return entity
+if not runOk then
+    CleanupAssetFiles(assetList)
+
+    error(
+        "V3 Brain: entity Run failed:\n"
+        .. tostring(runError)
+    )
+end
+
+-- Start V3 hybrid movement AFTER V2 has spawned
+-- and parented the model to Workspace.
+if config.Movement
+    and config.Movement.FollowPlayer == true
+then
+    StartHybridMovement(
+        entity,
+        config,
+        spawnState.Time
+    )
+end
+
+return entity
 end
 
 function Brain.GetCurrentEntity()
