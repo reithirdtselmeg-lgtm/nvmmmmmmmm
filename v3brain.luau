@@ -1456,7 +1456,7 @@ local function StartHybridMovement(entity, config, spawnTime)
 
             if reached then
                 pcall(function()
-                    entity:RunCallback(entity, "OnReachedNode", node)
+                   entity:RunCallback("OnReachedNode", node)
                 end)
                 routeIndex += 1
             end
@@ -1510,7 +1510,7 @@ function Brain.Spawn(config)
     local v2Config = BuildV2Config(config, model)
 
     local ok, entity = pcall(function()
-        return Original.Create(v2Config)   -- safer than :Create
+        return Original:Create(v2Config)
     end)
 
     if not ok or not entity then
