@@ -47,11 +47,11 @@ local ExternalAssetFunctions = {
 
 local function IsExternalUrl(value)
     return typeof(value) == "string"
-        and (value:match("^https://") or value:match("^http://")) \~= nil
+        and (value:match("^https://") or value:match("^http://")) ~= nil
 end
 
 local function GetExtension(url, fallback)
-    if typeof(url) \~= "string" then
+    if typeof(url) ~= "string" then
         return fallback
     end
 
@@ -133,7 +133,7 @@ local function DownloadExternalAsset(url, fallbackExtension)
         return game:HttpGet(url)
     end)
 
-    if not ok or typeof(data) \~= "string" or #data == 0 then
+    if not ok or typeof(data) ~= "string" or #data == 0 then
         warn("V3 Brain: failed to download external asset:\n" .. tostring(url))
         return nil, nil
     end
@@ -154,7 +154,7 @@ local function DownloadExternalAsset(url, fallbackExtension)
         return getcustomasset(path)
     end)
 
-    if not customOk or typeof(customAsset) \~= "string" or customAsset == "" then
+    if not customOk or typeof(customAsset) ~= "string" or customAsset == "" then
         SafeDeleteFile(path)
         warn("V3 Brain: getcustomasset failed:\n" .. path)
         return nil, nil
@@ -182,7 +182,7 @@ local function ResolveAsset(value, fallbackExtension, assetList)
 end
 
 local function CleanupAssetFiles(assetList)
-    if typeof(assetList) \~= "table" then
+    if typeof(assetList) ~= "table" then
         return
     end
 
@@ -375,11 +375,11 @@ do
         error("V3 Brain: patched V2 EXECUTION ERROR:\n" .. tostring(result))
     end
 
-    if typeof(result) \~= "table" then
+    if typeof(result) ~= "table" then
         error("V3 Brain: patched V2 returned " .. typeof(result) .. " instead of a table.")
     end
 
-    if typeof(result.Create) \~= "function" then
+    if typeof(result.Create) ~= "function" then
         error("V3 Brain: patched V2 loaded, but Create is missing.")
     end
 
@@ -430,7 +430,7 @@ local function GetColor(value)
         return value
     end
 
-    if typeof(value) \~= "string" then
+    if typeof(value) ~= "string" then
         return Color3.new(1, 1, 1)
     end
 
@@ -547,7 +547,7 @@ local function SetupFace(model, config)
     if not facePart then return end
 
     local faceId = config.FaceId
-    if typeof(faceId) \~= "string" or faceId == "" then return end
+    if typeof(faceId) ~= "string" or faceId == "" then return end
 
     local attachment = facePart:FindFirstChild("FaceAttachment")
     if not attachment then
@@ -596,7 +596,7 @@ local function SetupAura(model, config)
 
     for index = 1, math.min(#config.Auras, 3) do
         local auraData = config.Auras[index]
-        if typeof(auraData) == "table" and typeof(auraData.Id) == "string" and auraData.Id \~= "" then
+        if typeof(auraData) == "table" and typeof(auraData.Id) == "string" and auraData.Id ~= "" then
             local attachmentName = "AuraAttachment" .. index
             local particleName = "AuraParticle" .. index
 
@@ -852,7 +852,7 @@ local function Preload(config)
     local assets = {}
 
     local function AddAsset(id, className)
-        if typeof(id) \~= "string" or id == "" then return end
+        if typeof(id) ~= "string" or id == "" then return end
 
         local asset = Instance.new(className)
         asset.Name = "V3Preload"
@@ -936,7 +936,7 @@ local function RunJumpscare(config)
     image.Parent = gui
 
     local sound
-    if typeof(data.Sound) == "string" and data.Sound \~= "" then
+    if typeof(data.Sound) == "string" and data.Sound ~= "" then
         sound = Instance.new("Sound")
         sound.Name = "JumpscareSound"
         sound.SoundId = data.Sound
@@ -1671,12 +1671,12 @@ local function StartHybridMovement(entity, config, spawnTime)
 
             -- PLAYER IS IN ANOTHER ROOM
 
-            local roomChanged = lastPlayerRoomNumber \~= playerRoomNumber
-            local entityChanged = lastEntityRoomNumber \~= entityRoomNumber
+            local roomChanged = lastPlayerRoomNumber ~= playerRoomNumber
+            local entityChanged = lastEntityRoomNumber ~= entityRoomNumber
             local routeFinished = routeIndex > #route
 
             local targetRoomLoaded =
-                CurrentRooms:FindFirstChild(tostring(playerRoomNumber)) \~= nil
+                CurrentRooms:FindFirstChild(tostring(playerRoomNumber)) ~= nil
 
             if roomChanged
                 or entityChanged
