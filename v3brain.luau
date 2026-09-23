@@ -1277,15 +1277,62 @@ local function StartHybridMovement(entity, config, spawnTime)
         return GetRoomAtPosition(root.Position)
     end
 
-    --// ENTITY ROOM //--
+--// ENTITY ROOM //--
 
-    local function GetEntityRoom()
-        if not model.Parent then
-            return nil
-        end
-
-        return GetRoomAtPosition(model:GetPivot().Position)
+local function GetEntityRoom()
+    if not model.Parent then
+        return nil
     end
+
+    local position = model:GetPivot().Position
+
+    -- First try the exact floor raycast.
+    local room = GetRoomAtPosition(position)
+
+    if room then
+        return room
+    end
+
+    --==================================================
+    -- FALLBACK ROOM DETECTION
+    --==================================================
+    -- Sometimes the entity is sitting directly on/near
+    -- a RoomEntrance or RoomExit and the floor raycast
+    -- misses the room's internal model.
+    --
+    -- In that case, find the closest loaded room node.
+    -- This keeps the node system alive even when the
+    -- entity is between room boundaries.
+
+    local nearestRoom = nil
+    local nearestDistance = math.huge
+
+    for _, candidateRoom in ipairs(CurrentRooms:GetChildren()) do
+        local roomNumber = tonumber(candidateRoom.Name)
+
+        if roomNumber then
+            local nodes = GetNodesFromRoom(candidateRoom)
+
+            for _, node in ipairs(nodes) do
+                local nodePosition = GetNodePosition(node)
+                local distance =
+                    (nodePosition - position).Magnitude
+
+                if distance < nearestDistance then
+                    nearestDistance = distance
+                    nearestRoom = candidateRoom
+                end
+            end
+        end
+    end
+
+    -- Only accept the fallback when reasonably close.
+    if nearestRoom and nearestDistance <= 150 then
+        return nearestRoom
+    end
+
+    return nil
+end
 
     --// LATEST LOADED ROOM //--
 
@@ -1662,20 +1709,12 @@ task.spawn(function()
         -- PLAYER ROOM UNKNOWN
         --==================================================
 
-        if not playerRoomNumber then
-
-            -- Try the newest loaded room.
-            playerRoom = GetLatestRoom()
-
-            if playerRoom then
-                playerRoomNumber =
-                    GetRoomNumber(playerRoom)
-            end
-
-            if not playerRoomNumber then
-                return
-            end
-        end
+if not playerRoomNumber then
+    -- We cannot reliably know the player's room.
+    -- Do NOT pretend the latest loaded room is the
+    -- player's actual room.
+    return
+end
 
         --==================================================
         -- PLAYER IS IN OUR ROOM
@@ -1711,28 +1750,47 @@ task.spawn(function()
         --==================================================
 
         local roomChanged =
-            lastPlayerRoomNumber ~= playerRoomNumber
+    lastPlayerRoomNumber ~= playerRoomNumber
 
-        local entityChanged =
-            lastEntityRoomNumber ~= entityRoomNumber
+local entityChanged =
+    lastEntityRoomNumber ~= entityRoomNumber
 
-        -- Rebuild whenever either side changes rooms.
-        if roomChanged
-            or entityChanged
-            or routeIndex > #route
-        then
+--==================================================
+-- CHECK WHETHER THE ROUTE IS STILL VALID
+--==================================================
 
-            RebuildRoute(
-                entityRoom,
-                playerRoom
-            )
+local routeFinished =
+    routeIndex > #route
 
-            lastPlayerRoomNumber =
-                playerRoomNumber
+-- If the player is farther ahead than the rooms
+-- that were available when we built the route,
+-- rebuild as new rooms appear.
+local targetRoomLoaded =
+    CurrentRooms:FindFirstChild(
+        tostring(playerRoomNumber)
+    ) ~= nil
 
-            lastEntityRoomNumber =
-                entityRoomNumber
-        end
+--==================================================
+-- REBUILD ROUTE
+--==================================================
+
+if roomChanged
+    or entityChanged
+    or routeFinished
+    or targetRoomLoaded and #route == 0
+then
+
+    RebuildRoute(
+        entityRoom,
+        playerRoom
+    )
+
+    lastPlayerRoomNumber =
+        playerRoomNumber
+
+    lastEntityRoomNumber =
+        entityRoomNumber
+end
 
         --==================================================
         -- NO ROUTE
