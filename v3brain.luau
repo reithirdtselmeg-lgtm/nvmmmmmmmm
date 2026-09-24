@@ -1112,21 +1112,22 @@ local function SetupCallbacks(entity, config, assetList, spawnState)
     end)
 
     entity:SetCallback("OnStartMoving", function()
-        local model = entity.Model
-        if not model then return end
+    local model = entity.Model
+    if not model then return end
 
-PlayRushSound(
-    model,
-    config.FarRushSound,
-    config.FarVolume,
-    config.FarPlaybackSpeed,
-    "FarRush",
-    config.FarRollOffMaxDistance
-)
+    PlayRushSound(
+        model,
+        config.FarRushSound,
+        config.FarVolume,
+        config.FarPlaybackSpeed,
+        "FarRush",
+        config.FarRollOffMaxDistance
+    )
+end)
 
-    entity:SetCallback("OnReachedNode", function(...)
-        if not EntityActive then return end
-    end)
+entity:SetCallback("OnReachedNode", function(...)
+    if not EntityActive then return end
+end)
 
     entity:SetCallback("OnEnterRoom", function(room, firstTime)
         if not EntityActive then return end
