@@ -769,11 +769,23 @@ end
 
 --// rush sounds //--
 
-local function PlayRushSound(model, soundId, volume, playbackSpeed, name)
-    if not model then return end
+local function PlayRushSound(
+    model,
+    soundId,
+    volume,
+    playbackSpeed,
+    name,
+    rollOffMaxDistance
+)
+    if not model then
+        return
+    end
 
     local facePart = model:FindFirstChild("FacePart", true)
-    if not facePart then return end
+
+    if not facePart then
+        return
+    end
 
     local sound = CreateSound(
         facePart,
@@ -784,13 +796,16 @@ local function PlayRushSound(model, soundId, volume, playbackSpeed, name)
         true
     )
 
-    if not sound then return end
+    if not sound then
+        return
+    end
 
     sound.RollOffMode = Enum.RollOffMode.InverseTapered
     sound.RollOffMinDistance = 5
-    sound.RollOffMaxDistance = 240
+    sound.RollOffMaxDistance = rollOffMaxDistance or 240
 
     ActiveSounds[sound] = true
+
     sound:Play()
 end
 
@@ -1100,14 +1115,14 @@ local function SetupCallbacks(entity, config, assetList, spawnState)
         local model = entity.Model
         if not model then return end
 
-        PlayRushSound(
-            model,
-            config.FarRushSound,
-            config.FarVolume,
-            config.FarPlaybackSpeed,
-            "FarRush"
-        )
-    end)
+PlayRushSound(
+    model,
+    config.FarRushSound,
+    config.FarVolume,
+    config.FarPlaybackSpeed,
+    "FarRush",
+    config.FarRollOffMaxDistance
+)
 
     entity:SetCallback("OnReachedNode", function(...)
         if not EntityActive then return end
@@ -1120,13 +1135,14 @@ local function SetupCallbacks(entity, config, assetList, spawnState)
         if not model then return end
 
         if firstTime then
-            PlayRushSound(
-                model,
-                config.NearRushSound,
-                config.NearVolume,
-                config.NearPlaybackSpeed,
-                "NearRush"
-            )
+PlayRushSound(
+    model,
+    config.NearRushSound,
+    config.NearVolume,
+    config.NearPlaybackSpeed,
+    "NearRush",
+    config.NearRollOffMaxDistance
+)
         end
     end)
 
