@@ -788,7 +788,7 @@ local function PlayRushSound(model, soundId, volume, playbackSpeed, name)
 
     sound.RollOffMode = Enum.RollOffMode.InverseTapered
     sound.RollOffMinDistance = 5
-    sound.RollOffMaxDistance = 165
+    sound.RollOffMaxDistance = 240
 
     ActiveSounds[sound] = true
     sound:Play()
