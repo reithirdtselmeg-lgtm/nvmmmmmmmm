@@ -304,28 +304,99 @@ getgenv().VynixuEntitySpawnerV2 = nil
 
 local Original
 
-do
-    local ok, source = pcall(function()
-        return game:HttpGet(V2_URL)
-    end)
+local function DownloadV2Source()
+    local attempts = 3
+    local lastError = nil
 
-    if not ok or typeof(source) ~= "string" then
-        error("V3 Brain: failed to download V2 source.")
+    for attempt = 1, attempts do
+
+        -- Cache-buster so the executor cannot reuse
+        -- an older/truncated HTTP response.
+        local cacheBust =
+            tostring(os.time())
+            .. "_"
+            .. tostring(math.floor(os.clock() * 100000))
+            .. "_"
+            .. tostring(attempt)
+
+        local url =
+            V2_URL
+            .. "?v="
+            .. cacheBust
+
+        local ok, source = pcall(function()
+            return game:HttpGet(url)
+        end)
+
+        if ok
+            and typeof(source) == "string"
+            and #source > 10000
+        then
+
+            -- The current V2 source should end with Module.
+            -- This catches a truncated response before loadstring.
+            local trimmed = source:gsub("%s+$", "")
+
+            if trimmed:match("return%s+Module%s*$") then
+                return source
+            end
+
+            lastError =
+                "V2 source did not end with 'return Module'."
+        else
+            lastError =
+                "V2 HTTP response was invalid or suspiciously short."
+        end
+
+        task.wait(0.25)
     end
+
+    error(
+        "V3 Brain: failed to download a complete V2 source.\n"
+        .. tostring(lastError)
+    )
+end
+
+do
+
+    local source = DownloadV2Source()
+
+    print(
+        "V3 Brain: downloaded V2 source:",
+        #source,
+        "characters"
+    )
 
     local patchOk, patchedSource = pcall(function()
         return PatchV2Source(source)
     end)
 
     if not patchOk then
-        error("V3 Brain: failed to patch V2 movement:\n" .. tostring(patchedSource))
+        error(
+            "V3 Brain: failed to patch V2 source:\n"
+            .. tostring(patchedSource)
+        )
     end
 
+    print(
+        "V3 Brain: patched V2 source:",
+        #patchedSource,
+        "characters"
+    )
+
+    --// Compile //--
+
     local compileOk, V2Function = pcall(function()
+
         local fn, err = loadstring(patchedSource)
+
         if not fn then
-            error("V3 Brain: patched V2 COMPILE ERROR:\n" .. tostring(err))
+            error(
+                "V3 Brain: patched V2 COMPILE ERROR:\n"
+                .. tostring(err)
+            )
         end
+
         return fn
     end)
 
@@ -333,24 +404,36 @@ do
         error(tostring(V2Function))
     end
 
+    --// Execute //--
+
     local runOk, result = pcall(function()
         return V2Function()
     end)
 
     if not runOk then
-        error("V3 Brain: patched V2 EXECUTION ERROR:\n" .. tostring(result))
+        error(
+            "V3 Brain: patched V2 EXECUTION ERROR:\n"
+            .. tostring(result)
+        )
     end
 
     if typeof(result) ~= "table" then
-        error("V3 Brain: patched V2 returned " .. typeof(result) .. " instead of a table.")
+        error(
+            "V3 Brain: patched V2 returned "
+            .. typeof(result)
+            .. " instead of a table."
+        )
     end
 
     if typeof(result.Create) ~= "function" then
-        error("V3 Brain: patched V2 loaded, but Create is missing.")
+        error(
+            "V3 Brain: V2 loaded, but Create is missing."
+        )
     end
 
     Original = result
     getgenv().VynixuEntitySpawnerV2 = Original
+
 end
 
 --// colors //--
