@@ -1084,20 +1084,34 @@ local function BuildV2Config(config, model)
             Max = (config.Rebounding and config.Rebounding.Max) or 1,
             Delay = (config.Rebounding and config.Rebounding.Delay) or 2
         },
-        Death = {
-             Type = (config.Death and config.Death.Type) or "Guiding",
-             Hints = (config.Death and config.Death.Hints) or {},
-             Cause = (
-             config.Death
-             and typeof(config.Death.Cause) == "string"
-             and config.Death.Cause ~= ""
-             and config.Death.Cause
-       ) or "An entity killed you."
-}
+                Death = {
+            Type =
+                (config.Death and config.Death.Type)
+                or "Guiding",
+
+            Hints =
+                (config.Death and config.Death.Hints)
+                or {},
+
+            Cause = (
+                config.Death
+                and typeof(config.Death.Cause) == "string"
+                and config.Death.Cause ~= ""
+                and config.Death.Cause
+            ) or "An entity killed you."
+        }
+    }
+end
 
 --// callbacks //--
 
-local function SetupCallbacks(entity, config, assetList, spawnState)
+local function SetupCallbacks(
+    entity,
+    config,
+    assetList,
+    spawnState
+)
+
     entity:SetCallback("OnSpawned", function()
         spawnState.Time = os.clock()
         EntityActive = true
