@@ -1243,14 +1243,31 @@ PlayRushSound(
     end)
 
     entity:SetCallback("OnDamagePlayer", function(newHealth)
-        if not EntityActive then return end
 
-        if config.Jumpscare and config.Jumpscare.Enabled then
+    if not EntityActive then
+        return
+    end
+
+    local humanoid =
+        LocalPlayer.Character
+        and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+
+    local health =
+        tonumber(newHealth)
+        or (humanoid and humanoid.Health)
+        or 100
+
+    if health <= 0 then
+
+        if config.Jumpscare
+            and config.Jumpscare.Enabled
+        then
             task.spawn(function()
                 RunJumpscare(config)
             end)
         end
-    end)
+    end
+end)
 end
 
 --// V3 FOLLOW PLAYER / NODE HYBRID //--
