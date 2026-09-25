@@ -235,98 +235,64 @@ end
 --// V3 MOVEMENT PATCH //--
 
 local function PatchV2Source(source)
-    local movementStart = source:find("local function EntityMoveTo", 1, true)
-    local earthquakeStart = source:find("local function Earthquake", 1, true)
 
-    assert(
-        movementStart and earthquakeStart and earthquakeStart > movementStart,
-        "V3 Brain: failed to locate V2 EntityMoveTo."
-    )
-
-    local gap = earthquakeStart - movementStart
-
-    assert(
-        gap > 20 and gap < 5000,
-        "V3 Brain: unexpected gap (" .. gap .. ") chars between EntityMoveTo and Earthquake — V2 source structure may have changed, refusing to splice."
-    )
-
-    local newMovement = [[
-
-local function EntityMoveTo(model: Model, cframe: CFrame, speed: number)
-
-local reached = false
-local connection
-
-connection = RunService.Heartbeat:Connect(function(deltaTime)
-
-    if not model.Parent then
-        connection:Disconnect()
-        reached = true
-        return
+    if typeof(source) ~= "string" then
+        error("V3 Brain: V2 source is not a string.")
     end
 
-    if model:GetAttribute("Paused") then
-        return
-    end
+    --[[
+        IMPORTANT:
 
-    local pivot = model:GetPivot()
+        Do NOT splice a replacement function into the V2 source.
 
-    local currentPosition = pivot.Position
-    local targetPosition = cframe.Position
+        V3 FollowPlayer entities use StartHybridMovement()
+        for their actual movement, so replacing the entire
+        V2 EntityMoveTo function is unnecessary and can cause
+        patched-source syntax errors if the V2 source changes.
 
-    local difference = targetPosition - currentPosition
-    local distance = difference.Magnitude
+        We only make small, exact compatibility patches here.
+    ]]
 
-    if distance <= 0.01 then
+    local patchedSource = source
 
-        local rotationOnly = pivot - pivot.Position
+    --// Callback compatibility //--
 
-        model:PivotTo(
-            CFrame.new(targetPosition) * rotationOnly
+    local callbackSource, callbackCount =
+        patchedSource:gsub(
+            '"OnReachNode"',
+            '"OnReachedNode"'
         )
 
-        connection:Disconnect()
-        reached = true
-        return
+    patchedSource = callbackSource
+
+    if callbackCount == 0 then
+        warn(
+            "V3 Brain: " ..
+            "'OnReachNode' -> 'OnReachedNode' " ..
+            "patch matched 0 occurrences."
+        )
     end
 
-    local direction = difference / distance
-    local movement = math.min(speed * deltaTime, distance)
-    local newPosition = currentPosition + direction * movement
-    local flatDirection = Vector3.new(direction.X, 0, direction.Z)
+    --// Despawn movement speed //--
 
-    local newCFrame
+    local despawnPattern =
+        'EntityMoveTo%(model, model:GetPivot%(%) %- Vector3%.new%(0, 300, 0%), config%.Movement%.Speed%)'
 
-    if flatDirection.Magnitude > 0.001 then
-        newCFrame = CFrame.lookAt(newPosition, newPosition + flatDirection)
-    else
-        local rotationOnly = pivot - pivot.Position
-        newCFrame = CFrame.new(newPosition) * rotationOnly
-    end
-
-    model:PivotTo(newCFrame)
-
-end)
-
-repeat
-    RunService.Heartbeat:Wait()
-until reached
-
-end
-
-]]
-
-    source = source:sub(1, movementStart - 1) .. newMovement .. source:sub(earthquakeStart)
-
-    local patchedSource, matchCount = source:gsub('"OnReachNode"', '"OnReachedNode"')
-
-    patchedSource = patchedSource:gsub(
-        'EntityMoveTo%(model, model:GetPivot%(%) %- Vector3%.new%(0, 300, 0%), config%.Movement%.Speed%)',
+    local despawnReplacement =
         'EntityMoveTo(model, model:GetPivot() - Vector3.new(0, 300, 0), 60)'
-    )
 
-    if matchCount == 0 then
-        warn("V3 Brain: 'OnReachNode' -> 'OnReachedNode' patch matched 0 occurrences.")
+    local despawnSource, despawnCount =
+        patchedSource:gsub(
+            despawnPattern,
+            despawnReplacement
+        )
+
+    patchedSource = despawnSource
+
+    if despawnCount == 0 then
+        warn(
+            "V3 Brain: V2 despawn movement patch matched 0 occurrences."
+        )
     end
 
     return patchedSource
