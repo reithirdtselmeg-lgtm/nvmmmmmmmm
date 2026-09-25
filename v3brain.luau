@@ -1123,6 +1123,7 @@ PlayRushSound(
     "FarRush",
     config.FarRollOffMaxDistance
 )
+end) 
 
     entity:SetCallback("OnReachedNode", function(...)
         if not EntityActive then return end
