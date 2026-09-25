@@ -10,7 +10,7 @@
 ]]--
 
 if getgenv().VynixuEntitySpawnerV2 then return getgenv().VynixuEntitySpawnerV2 end
-if typeof(cause) ~= "string" or cause ~= "" then
+
 loadstring(game:HttpGet("https://raw.githubusercontent.com/RegularVynixu/Utilities/main/Functions.lua"))()
 
 -- \\ Services // --
@@ -904,22 +904,29 @@ Module.Run = function(self, entity: any, copyEntity: boolean)
     self.ActiveEntities[#self.ActiveEntities + 1] = entity
 
     -- Spawning
-    local spawnPoint: BasePart? = nil
-    do
-        local rooms = CurrentRooms:GetChildren()
-        if config.Movement.Reversed then
-            spawnPoint = rooms[#rooms]:FindFirstChild("RoomExit")
-        else
-            spawnPoint = rooms[1]:FindFirstChild("RoomEntrance")
-        end
-    end
-    if not spawnPoint then
-        error(string.format(debug.traceback("Failed to find spawn point for entity: '%s'"), config.Entity.Name))
-    end
+local OFFICIAL_ENTITY_SPAWN_POSITION = Vector3.new(
+    250.00001525878906,
+    0.10000000149011612,
+    45
+)
 
-    model:PivotTo(spawnPoint.CFrame + Vector3.new(0, config.Entity.HeightOffset, 0))
-    model.Parent = workspace
-    task.spawn(entity.RunCallback, entity, "OnSpawned")
+model:PivotTo(
+    CFrame.new(
+        OFFICIAL_ENTITY_SPAWN_POSITION
+    ) + Vector3.new(
+        0,
+        config.Entity.HeightOffset,
+        0
+    )
+)
+
+model.Parent = workspace
+
+task.spawn(
+    entity.RunCallback,
+    entity,
+    "OnSpawned"
+)
 
     local currentRoom = GetCurrentRoom(false)
     if currentRoom then
