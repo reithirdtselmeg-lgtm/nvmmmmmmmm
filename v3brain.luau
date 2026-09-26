@@ -1140,14 +1140,7 @@ local function BuildV2Config(config, model)
 
             Hints =
                 (config.Death and config.Death.Hints)
-                or {},
-
-            Cause = (
-                config.Death
-                and typeof(config.Death.Cause) == "string"
-                and config.Death.Cause ~= ""
-                and config.Death.Cause
-            ) or "An entity killed you."
+                or {}
         }
     }
 end
