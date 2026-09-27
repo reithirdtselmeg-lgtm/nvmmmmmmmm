@@ -2828,6 +2828,7 @@ local function SetupCallbacks(
 end
 
 --// V3 FOLLOW PLAYER / NODE HYBRID //--
+--// NODE ROOM STATE + DIRECT CHASE //--
 
 local function StartHybridMovement(
     entity,
@@ -2836,10 +2837,8 @@ local function StartHybridMovement(
 )
 
     if not config.Movement
-        or config.Movement.FollowPlayer
-            ~= true
+        or config.Movement.FollowPlayer ~= true
     then
-
         return
     end
 
@@ -2848,27 +2847,19 @@ local function StartHybridMovement(
         or entity.model
 
     if not model then
-
         warn(
-            "V3 HybridMovement: "
-            .. "entity model missing"
+            "V3 HybridMovement: entity model missing"
         )
-
         return
     end
 
     local CurrentRooms =
-        workspace:FindFirstChild(
-            "CurrentRooms"
-        )
+        workspace:FindFirstChild("CurrentRooms")
 
     if not CurrentRooms then
-
         warn(
-            "V3 HybridMovement: "
-            .. "CurrentRooms missing"
+            "V3 HybridMovement: CurrentRooms missing"
         )
-
         return
     end
 
@@ -2876,27 +2867,26 @@ local function StartHybridMovement(
         Players.LocalPlayer
 
     local speed =
-        tonumber(
-            config.Movement.Speed
-        )
+        tonumber(config.Movement.Speed)
         or 100
 
     local despawnTime =
         tonumber(
-            config.Movement
-                .FollowPlayerDespawnTime
+            config.Movement.FollowPlayerDespawnTime
         )
         or 0
 
     local movementDelay =
-        tonumber(
-            config.Movement.Delay
-        )
+        tonumber(config.Movement.Delay)
         or 0
 
     spawnTime =
         tonumber(spawnTime)
         or os.clock()
+
+    --==================================================--
+    -- PLAYER ROOT
+    --==================================================--
 
     local function GetPlayerRoot()
 
@@ -2907,15 +2897,17 @@ local function StartHybridMovement(
             return nil
         end
 
-        return character:
-            FindFirstChild(
-                "HumanoidRootPart"
-            )
-            or character:
-            FindFirstChild(
-                "Root"
-            )
+        return character:FindFirstChild(
+            "HumanoidRootPart"
+        )
+        or character:FindFirstChild(
+            "Root"
+        )
     end
+
+    --==================================================--
+    -- ROOM NUMBER
+    --==================================================--
 
     local function GetRoomNumber(room)
 
@@ -2923,14 +2915,45 @@ local function StartHybridMovement(
             return nil
         end
 
-        return tonumber(
-            room.Name
-        )
+        return tonumber(room.Name)
     end
 
-    local function GetRoomAtPosition(
-        position
-    )
+    --==================================================--
+    -- PLAYER ROOM
+    --
+    -- PLAYER ROOM CAN USE PHYSICAL DETECTION.
+    -- THIS IS ONLY FOR THE PLAYER.
+    --==================================================--
+
+    local function GetPlayerRoom()
+
+        local root =
+            GetPlayerRoot()
+
+        if not root then
+            return nil
+        end
+
+        -- Prefer the game's CurrentRoom attribute.
+
+        local currentRoom =
+            player:GetAttribute(
+                "CurrentRoom"
+            )
+
+        if currentRoom then
+
+            local room =
+                CurrentRooms:FindFirstChild(
+                    tostring(currentRoom)
+                )
+
+            if room then
+                return room
+            end
+        end
+
+        -- Physical fallback.
 
         local rooms =
             CurrentRooms:GetChildren()
@@ -2952,14 +2975,10 @@ local function StartHybridMovement(
             end
         )
 
-        for _, room in ipairs(
-            rooms
-        ) do
+        for _, room in ipairs(rooms) do
 
             local roomNumber =
-                tonumber(
-                    room.Name
-                )
+                tonumber(room.Name)
 
             if roomNumber then
 
@@ -2974,8 +2993,7 @@ local function StartHybridMovement(
                         RaycastParams.new()
 
                     params.FilterType =
-                        Enum.RaycastFilterType
-                            .Include
+                        Enum.RaycastFilterType.Include
 
                     params.FilterDescendantsInstances =
                         {
@@ -2988,7 +3006,7 @@ local function StartHybridMovement(
                     local result =
                         workspace:Raycast(
 
-                            position
+                            root.Position
                             + Vector3.new(
                                 0,
                                 5,
@@ -3014,39 +3032,9 @@ local function StartHybridMovement(
         return nil
     end
 
-    local function GetPlayerRoom()
-
-        local root =
-            GetPlayerRoot()
-
-        if not root then
-            return nil
-        end
-
-        local currentRoom =
-            player:GetAttribute(
-                "CurrentRoom"
-            )
-
-        if currentRoom then
-
-            local room =
-                CurrentRooms:
-                    FindFirstChild(
-                        tostring(
-                            currentRoom
-                        )
-                    )
-
-            if room then
-                return room
-            end
-        end
-
-        return GetRoomAtPosition(
-            root.Position
-        )
-    end
+    --==================================================--
+    -- NODES
+    --==================================================--
 
     local function GetNodesFromRoom(
         room
@@ -3058,6 +3046,10 @@ local function StartHybridMovement(
             return nodes
         end
 
+        --================================================--
+        -- ROOM ENTRANCE
+        --================================================--
+
         local roomEntrance =
             room:FindFirstChild(
                 "RoomEntrance"
@@ -3068,7 +3060,8 @@ local function StartHybridMovement(
             local node =
                 roomEntrance:Clone()
 
-            node.Name = "0"
+            node.Name =
+                "0"
 
             node.CFrame -=
                 Vector3.new(
@@ -3080,6 +3073,10 @@ local function StartHybridMovement(
             nodes[#nodes + 1] =
                 node
         end
+
+        --================================================--
+        -- NORMAL PATH NODES
+        --================================================--
 
         local nodesFolder =
             room:FindFirstChild(
@@ -3115,15 +3112,17 @@ local function StartHybridMovement(
                 roomNodes
             ) do
 
-                if node:IsA(
-                    "BasePart"
-                ) then
+                if node:IsA("BasePart") then
 
                     nodes[#nodes + 1] =
                         node
                 end
             end
         end
+
+        --================================================--
+        -- ROOM EXIT
+        --================================================--
 
         local roomExit =
             room:FindFirstChild(
@@ -3154,6 +3153,10 @@ local function StartHybridMovement(
         return nodes
     end
 
+    --==================================================--
+    -- NODE POSITION
+    --==================================================--
+
     local function GetNodePosition(
         node
     )
@@ -3177,7 +3180,19 @@ local function StartHybridMovement(
         ).Position
     end
 
-    local function GetEntityRoom()
+    --==================================================--
+    -- FIND INITIAL ENTITY ROOM
+    --
+    -- IMPORTANT:
+    --
+    -- This is ONLY used once.
+    -- After initialization, entityRoomNumber is
+    -- controlled by reached nodes.
+    --
+    -- NO PER-HEARTBEAT PHYSICAL ROOM DETECTION.
+    --==================================================--
+
+    local function FindInitialEntityRoom()
 
         if not model.Parent then
             return nil
@@ -3186,31 +3201,21 @@ local function StartHybridMovement(
         local position =
             model:GetPivot().Position
 
-        local room =
-            GetRoomAtPosition(
-                position
-            )
-
-        if room then
-            return room
-        end
-
-        local nearestRoom = nil
+        local nearestRoom =
+            nil
 
         local nearestDistance =
             math.huge
 
-        for _, candidateRoom in ipairs(
+        for _, room in ipairs(
             CurrentRooms:GetChildren()
         ) do
 
-            if tonumber(
-                candidateRoom.Name
-            ) then
+            if tonumber(room.Name) then
 
                 local nodes =
                     GetNodesFromRoom(
-                        candidateRoom
+                        room
                     )
 
                 for _, node in ipairs(
@@ -3236,7 +3241,7 @@ local function StartHybridMovement(
                             distance
 
                         nearestRoom =
-                            candidateRoom
+                            room
                     end
                 end
             end
@@ -3252,6 +3257,10 @@ local function StartHybridMovement(
         return nil
     end
 
+    --==================================================--
+    -- ORDER ROOMS
+    --==================================================--
+
     local function GetOrderedRooms()
 
         local rooms = {}
@@ -3260,13 +3269,10 @@ local function StartHybridMovement(
             CurrentRooms:GetChildren()
         ) do
 
-            if tonumber(
-                room.Name
-            ) then
+            if tonumber(room.Name) then
 
                 rooms[#rooms + 1] =
                     room
-
             end
         end
 
@@ -3283,6 +3289,10 @@ local function StartHybridMovement(
         return rooms
     end
 
+    --==================================================--
+    -- BUILD NODE ROUTE
+    --==================================================--
+
     local function BuildRoute(
         startRoomNumber,
         targetRoomNumber,
@@ -3294,14 +3304,12 @@ local function StartHybridMovement(
         if not startRoomNumber
             or not targetRoomNumber
         then
-
             return route
         end
 
         if startRoomNumber
             == targetRoomNumber
         then
-
             return route
         end
 
@@ -3315,9 +3323,7 @@ local function StartHybridMovement(
         ) do
 
             local number =
-                GetRoomNumber(
-                    room
-                )
+                GetRoomNumber(room)
 
             if number then
                 roomMap[number] =
@@ -3331,10 +3337,12 @@ local function StartHybridMovement(
             and 1
             or -1
 
+        --================================================--
+        -- START ROOM
+        --================================================--
+
         local startRoom =
-            roomMap[
-                startRoomNumber
-            ]
+            roomMap[startRoomNumber]
 
         if startRoom then
 
@@ -3345,7 +3353,8 @@ local function StartHybridMovement(
 
             if #nodes > 0 then
 
-                local nearestIndex = 1
+                local nearestIndex =
+                    1
 
                 if entityPosition then
 
@@ -3418,6 +3427,10 @@ local function StartHybridMovement(
             end
         end
 
+        --================================================--
+        -- ROOMS BETWEEN ENTITY AND PLAYER
+        --================================================--
+
         local currentRoomNumber =
             startRoomNumber
             + step
@@ -3425,9 +3438,7 @@ local function StartHybridMovement(
         while true do
 
             local room =
-                roomMap[
-                    currentRoomNumber
-                ]
+                roomMap[currentRoomNumber]
 
             if not room then
                 break
@@ -3475,7 +3486,6 @@ local function StartHybridMovement(
             if currentRoomNumber
                 == targetRoomNumber
             then
-
                 break
             end
 
@@ -3485,6 +3495,10 @@ local function StartHybridMovement(
 
         return route
     end
+
+    --==================================================--
+    -- MOVE TOWARD
+    --==================================================--
 
     local function MoveToward(
         targetPosition,
@@ -3554,7 +3568,7 @@ local function StartHybridMovement(
                 CFrame.lookAt(
                     newPosition,
                     newPosition
-                        + flatDirection
+                    + flatDirection
                 )
 
         else
@@ -3576,7 +3590,9 @@ local function StartHybridMovement(
         return false
     end
 
-    --// HYBRID MOVEMENT LOOP //--
+    --==================================================--
+    -- HYBRID LOOP
+    --==================================================--
 
     task.spawn(function()
 
@@ -3594,38 +3610,31 @@ local function StartHybridMovement(
         local connection
 
         local route = {}
-        local routeIndex = 1
+
+        local routeIndex =
+            1
+
+        local movementMode =
+            "NODE"
+
+        --================================================--
+        -- THIS IS THE IMPORTANT VARIABLE.
+        --
+        -- It represents the entity's ACTUAL NODE-BASED
+        -- room.
+        --
+        -- It does NOT come from a raycast every frame.
+        --================================================--
+
+        local entityRoomNumber =
+            nil
 
         local lastPlayerRoomNumber =
             nil
 
-        local logicalEntityRoomNumber =
-            nil
-
-        do
-
-            local startingRoom =
-                GetEntityRoom()
-
-            if startingRoom then
-
-                logicalEntityRoomNumber =
-                    GetRoomNumber(
-                        startingRoom
-                    )
-            end
-        end
-
-        if not logicalEntityRoomNumber then
-
-            warn(
-                "V3 HybridMovement: "
-                .. "failed to determine "
-                .. "initial entity room."
-            )
-
-            return
-        end
+        --================================================--
+        -- RESET ROUTE
+        --================================================--
 
         local function ResetRoute()
 
@@ -3633,34 +3642,123 @@ local function StartHybridMovement(
                 route
             )
 
-            routeIndex = 1
+            routeIndex =
+                1
         end
 
+        --================================================--
+        -- REBUILD ROUTE
+        --================================================--
+
         local function RebuildRoute(
-            playerRoomNumber
+            targetRoomNumber
         )
 
             ResetRoute()
 
-            if not logicalEntityRoomNumber
-                or not playerRoomNumber
+            if not entityRoomNumber
+                or not targetRoomNumber
             then
+                return
+            end
 
+            if entityRoomNumber
+                == targetRoomNumber
+            then
                 return
             end
 
             route =
                 BuildRoute(
 
-                    logicalEntityRoomNumber,
+                    entityRoomNumber,
 
-                    playerRoomNumber,
+                    targetRoomNumber,
 
                     model:GetPivot().Position
                 )
 
-            routeIndex = 1
+            routeIndex =
+                1
         end
+
+        --================================================--
+        -- INITIAL ROOM
+        --================================================--
+
+        local initialEntityRoom =
+            FindInitialEntityRoom()
+
+        local initialPlayerRoom =
+            GetPlayerRoom()
+
+        if not initialEntityRoom
+            or not initialPlayerRoom
+        then
+
+            warn(
+                "V3 HybridMovement: "
+                .. "failed to determine "
+                .. "initial rooms."
+            )
+
+            return
+        end
+
+        entityRoomNumber =
+            GetRoomNumber(
+                initialEntityRoom
+            )
+
+        local initialPlayerRoomNumber =
+            GetRoomNumber(
+                initialPlayerRoom
+            )
+
+        if not entityRoomNumber
+            or not initialPlayerRoomNumber
+        then
+            return
+        end
+
+        lastPlayerRoomNumber =
+            initialPlayerRoomNumber
+
+        --================================================--
+        -- INITIAL MODE
+        --
+        -- IMPORTANT:
+        --
+        -- If entity and player start in the same room,
+        -- we DO NOT blindly force chase here.
+        --
+        -- The entity follows its node system first.
+        -- It enters CHASE when its route state reaches
+        -- the player's room.
+        --================================================--
+
+        if entityRoomNumber
+            == initialPlayerRoomNumber
+        then
+
+            movementMode =
+                "CHASE"
+
+            ResetRoute()
+
+        else
+
+            movementMode =
+                "NODE"
+
+            RebuildRoute(
+                initialPlayerRoomNumber
+            )
+        end
+
+        --==================================================--
+        -- HEARTBEAT
+        --==================================================--
 
         connection =
             RunService.Heartbeat:Connect(
@@ -3672,6 +3770,10 @@ local function StartHybridMovement(
 
                         return
                     end
+
+                    --================================================--
+                    -- DESPAWN TIMER
+                    --================================================--
 
                     if despawnTime > 0
                         and (
@@ -3693,30 +3795,30 @@ local function StartHybridMovement(
                             task.spawn(
                                 function()
 
-                                    pcall(
-                                        function()
+                                    pcall(function()
 
-                                            entity:RunCallback(
-                                                "OnDespawning"
-                                            )
+                                        entity:RunCallback(
+                                            "OnDespawning"
+                                        )
 
-                                        end
-                                    )
+                                    end)
 
                                 end
                             )
 
-                            pcall(
-                                function()
-                                    entity:Despawn()
-                                end
-                            )
+                            pcall(function()
+                                entity:Despawn()
+                            end)
                         end
 
                         connection:Disconnect()
 
                         return
                     end
+
+                    --================================================--
+                    -- PLAYER
+                    --================================================--
 
                     local playerRoot =
                         GetPlayerRoot()
@@ -3741,16 +3843,62 @@ local function StartHybridMovement(
                         return
                     end
 
-                    -- SAME ROOM = CHASE
+                    --================================================--
+                    -- PLAYER CHANGED ROOM
+                    --================================================--
 
-                    if logicalEntityRoomNumber
-                        == playerRoomNumber
+                    if lastPlayerRoomNumber
+                        ~= playerRoomNumber
                     then
-
-                        ResetRoute()
 
                         lastPlayerRoomNumber =
                             playerRoomNumber
+
+                        -- Player moved away.
+                        --
+                        -- If entity isn't already in the
+                        -- new player room, go back to NODE mode.
+
+                        if entityRoomNumber
+                            ~= playerRoomNumber
+                        then
+
+                            movementMode =
+                                "NODE"
+
+                            RebuildRoute(
+                                playerRoomNumber
+                            )
+
+                        else
+
+                            movementMode =
+                                "CHASE"
+
+                            ResetRoute()
+                        end
+                    end
+
+                    --================================================--
+                    -- SAME ROOM = CHASE
+                    --
+                    -- This is based ONLY on the tracked
+                    -- node-room state.
+                    --==================================================
+
+                    if entityRoomNumber
+                        == playerRoomNumber
+                    then
+
+                        if movementMode
+                            ~= "CHASE"
+                        then
+
+                            movementMode =
+                                "CHASE"
+
+                            ResetRoute()
+                        end
 
                         MoveToward(
                             playerRoot.Position,
@@ -3760,27 +3908,42 @@ local function StartHybridMovement(
                         return
                     end
 
-                    local playerRoomChanged =
-                        lastPlayerRoomNumber
-                        ~= playerRoomNumber
+                    --================================================--
+                    -- DIFFERENT ROOM = NODE MODE
+                    --==================================================
 
-                    if playerRoomChanged
-                        or routeIndex
-                            > #route
-                        or #route == 0
+                    if movementMode
+                        ~= "NODE"
+                    then
+
+                        movementMode =
+                            "NODE"
+
+                        RebuildRoute(
+                            playerRoomNumber
+                        )
+                    end
+
+                    --================================================--
+                    -- ROUTE VALIDATION
+                    --==================================================
+
+                    if #route == 0
+                        or routeIndex > #route
                     then
 
                         RebuildRoute(
                             playerRoomNumber
                         )
-
-                        lastPlayerRoomNumber =
-                            playerRoomNumber
                     end
 
                     if #route == 0 then
                         return
                     end
+
+                    --================================================--
+                    -- CURRENT NODE
+                    --==================================================
 
                     local routeData =
                         route[routeIndex]
@@ -3795,9 +3958,6 @@ local function StartHybridMovement(
                     local node =
                         routeData.Node
 
-                    local nodeRoomNumber =
-                        routeData.RoomNumber
-
                     if not node then
 
                         routeIndex += 1
@@ -3810,6 +3970,10 @@ local function StartHybridMovement(
                             node
                         )
 
+                    --================================================--
+                    -- FOLLOW NODE
+                    --==================================================
+
                     local reached =
                         MoveToward(
                             targetPosition,
@@ -3818,27 +3982,59 @@ local function StartHybridMovement(
 
                     if reached then
 
-                        pcall(
-                            function()
+                        --================================================--
+                        -- NODE REACHED
+                        --================================================--
 
-                                entity:RunCallback(
-                                    "OnReachedNode",
-                                    node
-                                )
+                        pcall(function()
 
-                            end
-                        )
+                            entity:RunCallback(
+                                "OnReachedNode",
+                                node
+                            )
 
-                        if nodeRoomNumber
-                            and nodeRoomNumber
-                                ~= logicalEntityRoomNumber
-                        then
+                        end)
 
-                            logicalEntityRoomNumber =
-                                nodeRoomNumber
+                        --================================================--
+                        -- UPDATE ENTITY ROOM
+                        --
+                        -- THIS IS THE KEY FIX.
+                        --
+                        -- The entity only changes rooms when it
+                        -- actually reaches a node assigned to that
+                        -- room.
+                        --==================================================
+
+                        local reachedRoomNumber =
+                            routeData.RoomNumber
+
+                        if reachedRoomNumber then
+
+                            entityRoomNumber =
+                                reachedRoomNumber
                         end
 
                         routeIndex += 1
+
+                        --================================================--
+                        -- DID WE JUST ENTER PLAYER'S ROOM?
+                        --==================================================
+
+                        if entityRoomNumber
+                            == playerRoomNumber
+                        then
+
+                            movementMode =
+                                "CHASE"
+
+                            ResetRoute()
+
+                            return
+                        end
+
+                        --================================================--
+                        -- ROUTE FINISHED
+                        --==================================================
 
                         if routeIndex
                             > #route
@@ -3851,6 +4047,10 @@ local function StartHybridMovement(
                     end
                 end
             )
+
+        --==================================================--
+        -- SAFETY CLEANUP
+        --==================================================--
 
         task.spawn(function()
 
