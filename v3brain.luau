@@ -1,5 +1,5 @@
 --// V3 ENTITY BRAIN //--
---// made by: 𝕝𝕦𝕟𝕒𝕣𝕓𝕣𝕖𝕓𝕖𝕒𝕦𝕥𝕪 𝕒𝕜𝕒 𝕖𝕝_𝕧𝕚𝕣𝕖𝕩𝕦𝕤!! //--
+--// made by: 𝕝𝕦𝕟𝕒𝕣𝕓𝕖𝕒𝕦𝕥𝕪 𝕒𝕜𝕒 𝕖𝕝_𝕧𝕚𝕣𝕖𝕩𝕦𝕤!! //--
 
 --// RETURN ONLY IF A VALID V3 BRAIN ALREADY EXISTS //--
 
@@ -12,8 +12,6 @@ then
     return ExistingV3
 end
 
--- Old/incomplete V3 instance detected.
--- Clear it so this version can initialize properly.
 getgenv().VynixuEntitySpawnerV3 = nil
 
 --// Services //--
@@ -47,7 +45,10 @@ local ExternalAssetFunctions = {
 
 local function IsExternalUrl(value)
     return typeof(value) == "string"
-        and (value:match("^https://") or value:match("^http://")) ~= nil
+        and (
+            value:match("^https://")
+            or value:match("^http://")
+        ) ~= nil
 end
 
 local function GetExtension(url, fallback)
@@ -55,8 +56,12 @@ local function GetExtension(url, fallback)
         return fallback
     end
 
-    local cleanUrl = url:match("^[^?#]+") or url
-    local extension = cleanUrl:match("%.([%w]+)$")
+    local cleanUrl =
+        url:match("^[^?#]+")
+        or url
+
+    local extension =
+        cleanUrl:match("%.([%w]+)$")
 
     if extension and #extension <= 8 then
         return extension:lower()
@@ -83,36 +88,57 @@ local function SafeDeleteFile(path)
     end
 
     pcall(function()
+
         if SafeIsFile(path) then
             delfile(path)
         end
+
     end)
 end
 
 local function EnsureAssetFolder()
+
     if not ExternalAssetFunctions.MakeFolder then
         return true
     end
 
     local ok = pcall(function()
-        if not isfolder or not isfolder(ASSET_FOLDER) then
+
+        if not isfolder
+            or not isfolder(ASSET_FOLDER)
+        then
             makefolder(ASSET_FOLDER)
         end
+
     end)
 
     return ok
 end
 
 local function GenerateAssetPath(url, extension)
+
     local randomPart =
         tostring(math.random(100000, 999999))
         .. "_"
-        .. tostring(math.floor(os.clock() * 100000))
+        .. tostring(
+            math.floor(
+                os.clock() * 100000
+            )
+        )
 
-    return ASSET_FOLDER .. "/V3_" .. randomPart .. "." .. extension
+    return
+        ASSET_FOLDER
+        .. "/V3_"
+        .. randomPart
+        .. "."
+        .. extension
 end
 
-local function DownloadExternalAsset(url, fallbackExtension)
+local function DownloadExternalAsset(
+    url,
+    fallbackExtension
+)
+
     if not IsExternalUrl(url) then
         return url, nil
     end
@@ -121,6 +147,7 @@ local function DownloadExternalAsset(url, fallbackExtension)
         or not ExternalAssetFunctions.WriteFile
         or not ExternalAssetFunctions.GetCustomAsset
     then
+
         warn(
             "V3 Brain: external asset requires "
             .. "HttpGet, writefile, and getcustomasset."
@@ -130,18 +157,24 @@ local function DownloadExternalAsset(url, fallbackExtension)
     end
 
     if not EnsureAssetFolder() then
-        warn("V3 Brain: failed to prepare asset folder.")
+
+        warn(
+            "V3 Brain: failed to prepare asset folder."
+        )
+
         return nil, nil
     end
 
-    local ok, data = pcall(function()
-        return game:HttpGet(url)
-    end)
+    local ok, data =
+        pcall(function()
+            return game:HttpGet(url)
+        end)
 
     if not ok
         or typeof(data) ~= "string"
         or #data == 0
     then
+
         warn(
             "V3 Brain: failed to download external asset:\n"
             .. tostring(url)
@@ -150,14 +183,25 @@ local function DownloadExternalAsset(url, fallbackExtension)
         return nil, nil
     end
 
-    local extension = GetExtension(url, fallbackExtension)
-    local path = GenerateAssetPath(url, extension)
+    local extension =
+        GetExtension(
+            url,
+            fallbackExtension
+        )
 
-    local writeOk = pcall(function()
-        writefile(path, data)
-    end)
+    local path =
+        GenerateAssetPath(
+            url,
+            extension
+        )
+
+    local writeOk =
+        pcall(function()
+            writefile(path, data)
+        end)
 
     if not writeOk then
+
         warn(
             "V3 Brain: failed to write external asset:\n"
             .. path
@@ -166,14 +210,16 @@ local function DownloadExternalAsset(url, fallbackExtension)
         return nil, nil
     end
 
-    local customOk, customAsset = pcall(function()
-        return getcustomasset(path)
-    end)
+    local customOk, customAsset =
+        pcall(function()
+            return getcustomasset(path)
+        end)
 
     if not customOk
         or typeof(customAsset) ~= "string"
         or customAsset == ""
     then
+
         SafeDeleteFile(path)
 
         warn(
@@ -187,8 +233,15 @@ local function DownloadExternalAsset(url, fallbackExtension)
     return customAsset, path
 end
 
-local function ResolveAsset(value, fallbackExtension, assetList)
-    if typeof(value) ~= "string" or value == "" then
+local function ResolveAsset(
+    value,
+    fallbackExtension,
+    assetList
+)
+
+    if typeof(value) ~= "string"
+        or value == ""
+    then
         return value
     end
 
@@ -197,24 +250,33 @@ local function ResolveAsset(value, fallbackExtension, assetList)
     end
 
     local resolved, path =
-        DownloadExternalAsset(value, fallbackExtension)
+        DownloadExternalAsset(
+            value,
+            fallbackExtension
+        )
 
     if path then
-        table.insert(assetList, path)
+        table.insert(
+            assetList,
+            path
+        )
     end
 
     return resolved
 end
 
 local function CleanupAssetFiles(assetList)
+
     if typeof(assetList) ~= "table" then
         return
     end
 
     for _, path in ipairs(assetList) do
+
         if typeof(path) == "string" then
             SafeDeleteFile(path)
         end
+
     end
 
     table.clear(assetList)
@@ -223,20 +285,34 @@ end
 --// resolve all supported config assets //--
 
 local function ResolveConfigAssets(config)
+
     local assetList = {}
 
     local function Image(value)
-        return ResolveAsset(value, "png", assetList)
+        return ResolveAsset(
+            value,
+            "png",
+            assetList
+        )
     end
 
     local function Sound(value)
-        return ResolveAsset(value, "ogg", assetList)
+        return ResolveAsset(
+            value,
+            "ogg",
+            assetList
+        )
     end
 
-    config.FaceId = Image(config.FaceId)
+    config.FaceId =
+        Image(config.FaceId)
 
     if typeof(config.Auras) == "table" then
-        for i, auraData in ipairs(config.Auras) do
+
+        for i, auraData in ipairs(
+            config.Auras
+        ) do
+
             if i > 3 then
                 break
             end
@@ -244,8 +320,10 @@ local function ResolveConfigAssets(config)
             if typeof(auraData) == "table"
                 and auraData.Id
             then
+
                 auraData.Id =
                     Image(auraData.Id)
+
             end
         end
     end
@@ -263,11 +341,16 @@ local function ResolveConfigAssets(config)
         Sound(config.DespawnSound)
 
     if config.Jumpscare then
+
         config.Jumpscare.Image =
-            Image(config.Jumpscare.Image)
+            Image(
+                config.Jumpscare.Image
+            )
 
         config.Jumpscare.Sound =
-            Sound(config.Jumpscare.Sound)
+            Sound(
+                config.Jumpscare.Sound
+            )
     end
 
     return assetList
@@ -278,22 +361,11 @@ end
 local function PatchV2Source(source)
 
     if typeof(source) ~= "string" then
+
         error(
             "V3 Brain: V2 source is not a string."
         )
     end
-
-    --[[
-        IMPORTANT:
-
-        Do NOT splice a replacement function into
-        the V2 source.
-
-        V3 FollowPlayer entities use
-        StartHybridMovement() for their actual
-        movement, so replacing EntityMoveTo()
-        is unnecessary.
-    ]]
 
     local patchedSource = source
 
@@ -305,9 +377,11 @@ local function PatchV2Source(source)
             '"OnReachedNode"'
         )
 
-    patchedSource = callbackSource
+    patchedSource =
+        callbackSource
 
     if callbackCount == 0 then
+
         warn(
             "V3 Brain: "
             .. "'OnReachNode' -> 'OnReachedNode' "
@@ -329,9 +403,11 @@ local function PatchV2Source(source)
             despawnReplacement
         )
 
-    patchedSource = despawnSource
+    patchedSource =
+        despawnSource
 
     if despawnCount == 0 then
+
         warn(
             "V3 Brain: V2 despawn movement patch "
             .. "matched 0 occurrences."
@@ -358,7 +434,9 @@ local function DownloadV2Source()
             tostring(os.time())
             .. "_"
             .. tostring(
-                math.floor(os.clock() * 100000)
+                math.floor(
+                    os.clock() * 100000
+                )
             )
             .. "_"
             .. tostring(attempt)
@@ -426,6 +504,7 @@ do
         end)
 
     if not patchOk then
+
         error(
             "V3 Brain: failed to patch V2 source:\n"
             .. tostring(patchedSource)
@@ -438,8 +517,6 @@ do
         "characters"
     )
 
-    --// Compile //--
-
     local compileOk, V2Function =
         pcall(function()
 
@@ -447,6 +524,7 @@ do
                 loadstring(patchedSource)
 
             if not fn then
+
                 error(
                     "V3 Brain: patched V2 "
                     .. "COMPILE ERROR:\n"
@@ -461,14 +539,13 @@ do
         error(tostring(V2Function))
     end
 
-    --// Execute //--
-
     local runOk, result =
         pcall(function()
             return V2Function()
         end)
 
     if not runOk then
+
         error(
             "V3 Brain: patched V2 "
             .. "EXECUTION ERROR:\n"
@@ -477,6 +554,7 @@ do
     end
 
     if typeof(result) ~= "table" then
+
         error(
             "V3 Brain: patched V2 returned "
             .. typeof(result)
@@ -485,6 +563,7 @@ do
     end
 
     if typeof(result.Create) ~= "function" then
+
         error(
             "V3 Brain: V2 loaded, "
             .. "but Create is missing."
@@ -574,14 +653,27 @@ _G.AuraColors = AuraColors
 
 --// color mixer //--
 
-local function MixColors(color1, color2)
+local function MixColors(
+    color1,
+    color2
+)
 
     return Color3.new(
-        (color1.R + color2.R) / 2,
-        (color1.G + color2.G) / 2,
-        (color1.B + color2.B) / 2
-    )
+        (
+            color1.R
+            + color2.R
+        ) / 2,
 
+        (
+            color1.G
+            + color2.G
+        ) / 2,
+
+        (
+            color1.B
+            + color2.B
+        ) / 2
+    )
 end
 
 local function GetColor(value)
@@ -605,8 +697,16 @@ local function GetColor(value)
 
     if left and right then
 
-        if string.find(right, "%+") then
-            return Color3.new(1, 1, 1)
+        if string.find(
+            right,
+            "%+"
+        ) then
+
+            return Color3.new(
+                1,
+                1,
+                1
+            )
         end
 
         local color1 =
@@ -616,6 +716,7 @@ local function GetColor(value)
             AuraColors[right]
 
         if color1 and color2 then
+
             return MixColors(
                 color1,
                 color2
@@ -623,7 +724,11 @@ local function GetColor(value)
         end
     end
 
-    return Color3.new(1, 1, 1)
+    return Color3.new(
+        1,
+        1,
+        1
+    )
 end
 
 --// state //--
@@ -634,24 +739,83 @@ local EntityActive = false
 local CurrentEntity = nil
 local EnvironmentEffect = nil
 
---// active sounds //--
+--// ACTIVE RUSH SOUNDS //--
+--//
+--// FAR AND NEAR ARE BESTIES.
+--// THEY DO NOT CANCEL EACH OTHER.
+--//
+--// Each one gets ONE instance.
+--// FarRush and NearRush can exist
+--// simultaneously.
+--//
 
 local ActiveSounds = {}
 
--- IMPORTANT:
--- NearRush is intended to be a single persistent
--- sound instance for the entity.
-
+local FarRushSoundInstance = nil
 local NearRushSoundInstance = nil
 
 local function SafeDestroy(instance)
 
     if instance then
+
         pcall(function()
             instance:Destroy()
         end)
+
+    end
+end
+
+local function RegisterSound(
+    sound,
+    soundType
+)
+
+    if not sound then
+        return
     end
 
+    ActiveSounds[sound] =
+        soundType
+
+    if soundType == "FarRush" then
+
+        FarRushSoundInstance =
+            sound
+
+    elseif soundType == "NearRush" then
+
+        NearRushSoundInstance =
+            sound
+
+    end
+end
+
+local function UnregisterSound(sound)
+
+    if not sound then
+        return
+    end
+
+    local soundType =
+        ActiveSounds[sound]
+
+    ActiveSounds[sound] = nil
+
+    if sound ==
+        FarRushSoundInstance
+    then
+
+        FarRushSoundInstance = nil
+    end
+
+    if sound ==
+        NearRushSoundInstance
+    then
+
+        NearRushSoundInstance = nil
+    end
+
+    return soundType
 end
 
 local function StopSound(sound)
@@ -664,25 +828,42 @@ local function StopSound(sound)
         sound:Stop()
     end)
 
-    -- Clear the special NearRush reference.
+    UnregisterSound(
+        sound
+    )
 
-    if sound == NearRushSoundInstance then
-        NearRushSoundInstance = nil
-    end
-
-    ActiveSounds[sound] = nil
-
-    SafeDestroy(sound)
+    SafeDestroy(
+        sound
+    )
 end
 
 local function StopAllActiveSounds()
 
-    for sound, _ in pairs(ActiveSounds) do
-        StopSound(sound)
+    local sounds = {}
+
+    for sound in pairs(
+        ActiveSounds
+    ) do
+
+        sounds[#sounds + 1] =
+            sound
+
     end
 
-    table.clear(ActiveSounds)
+    for _, sound in ipairs(
+        sounds
+    ) do
 
+        StopSound(
+            sound
+        )
+    end
+
+    table.clear(
+        ActiveSounds
+    )
+
+    FarRushSoundInstance = nil
     NearRushSoundInstance = nil
 end
 
@@ -718,8 +899,13 @@ local function PrepareModel(config)
         Instance.new("Part")
 
     root.Name = "Root"
+
     root.Size =
-        Vector3.new(2, 2, 2)
+        Vector3.new(
+            2,
+            2,
+            2
+        )
 
     root.Transparency = 1
     root.Anchored = true
@@ -728,16 +914,24 @@ local function PrepareModel(config)
     root.CanQuery = false
     root.CastShadow = false
 
-    root.Parent = model
+    root.Parent =
+        model
 
-    model.PrimaryPart = root
+    model.PrimaryPart =
+        root
 
     local face =
         Instance.new("Part")
 
-    face.Name = "FacePart"
+    face.Name =
+        "FacePart"
+
     face.Size =
-        Vector3.new(4, 4, 0.2)
+        Vector3.new(
+            4,
+            4,
+            0.2
+        )
 
     face.Transparency = 1
     face.Anchored = false
@@ -754,14 +948,16 @@ local function PrepareModel(config)
             -1.2
         )
 
-    face.Parent = model
+    face.Parent =
+        model
 
     local weld =
-        Instance.new("WeldConstraint")
+        Instance.new(
+            "WeldConstraint"
+        )
 
     weld.Part0 = root
     weld.Part1 = face
-
     weld.Parent = face
 
     return model
@@ -769,10 +965,15 @@ end
 
 --// face //--
 
-local function SetupFace(model, config)
+local function SetupFace(
+    model,
+    config
+)
 
     local facePart =
-        FindFacePart(model)
+        FindFacePart(
+            model
+        )
 
     if not facePart then
         return
@@ -795,7 +996,9 @@ local function SetupFace(model, config)
     if not attachment then
 
         attachment =
-            Instance.new("Attachment")
+            Instance.new(
+                "Attachment"
+            )
 
         attachment.Name =
             "FaceAttachment"
@@ -812,7 +1015,9 @@ local function SetupFace(model, config)
     if not emitter then
 
         emitter =
-            Instance.new("ParticleEmitter")
+            Instance.new(
+                "ParticleEmitter"
+            )
 
         emitter.Name =
             "FaceParticle"
@@ -829,7 +1034,8 @@ local function SetupFace(model, config)
     ) do
 
         pcall(function()
-            emitter[property] = value
+            emitter[property] =
+                value
         end)
 
     end
@@ -837,7 +1043,10 @@ end
 
 --// multi-aura //--
 
-local function SetupAura(model, config)
+local function SetupAura(
+    model,
+    config
+)
 
     local root =
         model.PrimaryPart
@@ -876,7 +1085,9 @@ local function SetupAura(model, config)
     end
 
     local masterColor =
-        GetColor(firstAura.Color)
+        GetColor(
+            firstAura.Color
+        )
 
     local masterColorSequence =
         ColorSequence.new(
@@ -884,7 +1095,10 @@ local function SetupAura(model, config)
         )
 
     for index = 1,
-        math.min(#config.Auras, 3)
+        math.min(
+            #config.Auras,
+            3
+        )
     do
 
         local auraData =
@@ -977,10 +1191,14 @@ local function SetupLight(
     end
 
     local oldLight =
-        root:FindFirstChild(name)
+        root:FindFirstChild(
+            name
+        )
 
     if oldLight then
-        SafeDestroy(oldLight)
+        SafeDestroy(
+            oldLight
+        )
     end
 
     if not data
@@ -990,12 +1208,17 @@ local function SetupLight(
     end
 
     local light =
-        Instance.new("PointLight")
+        Instance.new(
+            "PointLight"
+        )
 
-    light.Name = name
+    light.Name =
+        name
 
     light.Color =
-        GetColor(data.Color)
+        GetColor(
+            data.Color
+        )
 
     light.Range =
         data.Range or 30
@@ -1011,10 +1234,16 @@ end
 
 --// environment //--
 
-local function SetupEnvironment(config)
+local function SetupEnvironment(
+    config
+)
 
     if EnvironmentEffect then
-        SafeDestroy(EnvironmentEffect)
+
+        SafeDestroy(
+            EnvironmentEffect
+        )
+
         EnvironmentEffect = nil
     end
 
@@ -1036,18 +1265,22 @@ local function SetupEnvironment(config)
         "V3EntityEnvironmentColor"
 
     local targetColor =
-        GetColor(data.Color)
+        GetColor(
+            data.Color
+        )
 
     local strength =
         math.clamp(
-            tonumber(data.Strength)
-            or 45,
+            tonumber(
+                data.Strength
+            ) or 45,
             0,
             100
         ) / 100
 
     local targetTint =
         Color3.new(
+
             1 + (
                 targetColor.R - 1
             ) * strength,
@@ -1062,7 +1295,11 @@ local function SetupEnvironment(config)
         )
 
     effect.TintColor =
-        Color3.new(1, 1, 1)
+        Color3.new(
+            1,
+            1,
+            1
+        )
 
     effect.Brightness = 0
     effect.Contrast = 0
@@ -1076,21 +1313,26 @@ local function SetupEnvironment(config)
 
     local fadeIn =
         math.max(
-            tonumber(data.FadeIn)
-            or 0.5,
+            tonumber(
+                data.FadeIn
+            ) or 0.5,
             0
         )
 
     local tween =
         TweenService:Create(
+
             effect,
+
             TweenInfo.new(
                 fadeIn,
                 Enum.EasingStyle.Quad,
                 Enum.EasingDirection.Out
             ),
+
             {
-                TintColor = targetTint,
+                TintColor =
+                    targetTint,
 
                 Brightness =
                     strength * 0.15,
@@ -1106,7 +1348,9 @@ local function SetupEnvironment(config)
     tween:Play()
 end
 
-local function RemoveEnvironment(config)
+local function RemoveEnvironment(
+    config
+)
 
     local effect =
         EnvironmentEffect
@@ -1123,13 +1367,15 @@ local function RemoveEnvironment(config)
 
     local fadeOut =
         math.max(
-            tonumber(data.FadeOut)
-            or 0.5,
+            tonumber(
+                data.FadeOut
+            ) or 0.5,
             0
         )
 
     local tween =
         TweenService:Create(
+
             effect,
 
             TweenInfo.new(
@@ -1140,7 +1386,11 @@ local function RemoveEnvironment(config)
 
             {
                 TintColor =
-                    Color3.new(1, 1, 1),
+                    Color3.new(
+                        1,
+                        1,
+                        1
+                    ),
 
                 Brightness = 0,
                 Contrast = 0,
@@ -1153,7 +1403,11 @@ local function RemoveEnvironment(config)
     task.delay(
         fadeOut,
         function()
-            SafeDestroy(effect)
+
+            SafeDestroy(
+                effect
+            )
+
         end
     )
 end
@@ -1177,7 +1431,9 @@ local function CreateSound(
     end
 
     local sound =
-        Instance.new("Sound")
+        Instance.new(
+            "Sound"
+        )
 
     sound.Name =
         name or "V3Sound"
@@ -1185,14 +1441,22 @@ local function CreateSound(
     sound.SoundId =
         soundId
 
+    -- IMPORTANT:
+    -- do NOT use `volume or 1`
+    -- because 0 is a valid value.
+
     sound.Volume =
-        volume or 1
+        volume ~= nil
+        and volume
+        or 1
 
     sound.Looped =
         looped == true
 
     sound.PlaybackSpeed =
-        playbackSpeed or 1
+        playbackSpeed ~= nil
+        and playbackSpeed
+        or 1
 
     sound.Parent =
         parent
@@ -1202,7 +1466,9 @@ end
 
 --// spawn sound //--
 
-local function PlaySpawnSound(config)
+local function PlaySpawnSound(
+    config
+)
 
     local playerGui =
         LocalPlayer:FindFirstChildOfClass(
@@ -1215,11 +1481,17 @@ local function PlaySpawnSound(config)
 
     local sound =
         CreateSound(
+
             playerGui,
+
             config.SpawnSound,
+
             config.SpawnVolume,
+
             config.SpawnPlaybackSpeed,
+
             "V3SpawnSound",
+
             false
         )
 
@@ -1230,16 +1502,30 @@ local function PlaySpawnSound(config)
     sound:Play()
 
     task.delay(
+
         config.SpawnSoundTimeout
         or 5,
 
         function()
-            SafeDestroy(sound)
+
+            SafeDestroy(
+                sound
+            )
+
         end
     )
 end
 
---// rush sounds //--
+--// RUSH SOUNDS //--
+--//
+--// FarRush + NearRush:
+--//
+--//     FAR 🤝 NEAR
+--//      BESTIES
+--//
+--// They are completely independent.
+--// One NEVER cancels the other.
+--//
 
 local function PlayRushSound(
     model,
@@ -1251,96 +1537,140 @@ local function PlayRushSound(
 )
 
     if not model then
-        return
+        return nil
+    end
+
+    if typeof(soundId) ~= "string"
+        or soundId == ""
+    then
+        return nil
     end
 
     local facePart =
-        model:FindFirstChild(
-            "FacePart",
-            true
+        FindFacePart(
+            model
         )
 
     if not facePart then
-        return
+        return nil
     end
 
-    --====================================================--
-    -- IMPORTANT DUPLICATE PROTECTION
-    --====================================================--
+    local soundType =
+        name
 
-    if name == "NearRush" then
+    --==================================================--
+    -- FAR RUSH DUPLICATE PROTECTION
+    --==================================================--
 
-        -- If NearRush already exists,
-        -- DO NOT create another one.
+    if soundType == "FarRush" then
+
+        if FarRushSoundInstance
+            and FarRushSoundInstance.Parent
+        then
+
+            if not FarRushSoundInstance.IsPlaying then
+                FarRushSoundInstance:Play()
+            end
+
+            return FarRushSoundInstance
+        end
+
+    --==================================================--
+    -- NEAR RUSH DUPLICATE PROTECTION
+    --==================================================--
+
+    elseif soundType == "NearRush" then
 
         if NearRushSoundInstance
             and NearRushSoundInstance.Parent
         then
-            return
-        end
 
-        -- Extra protection:
-        -- detect an already-created NearRush
-        -- directly under the FacePart.
-
-        local existing =
-            facePart:FindFirstChild(
-                "NearRush"
-            )
-
-        if existing
-            and existing:IsA("Sound")
-        then
-
-            NearRushSoundInstance =
-                existing
-
-            ActiveSounds[existing] = true
-
-            if not existing.IsPlaying then
-                existing:Play()
+            if not NearRushSoundInstance.IsPlaying then
+                NearRushSoundInstance:Play()
             end
 
-            return
+            return NearRushSoundInstance
         end
     end
 
-    --====================================================--
-    -- CREATE SOUND
-    --====================================================--
+    --==================================================--
+    -- CHECK MODEL FOR EXISTING INSTANCE
+    --==================================================--
+
+    local existing =
+        facePart:FindFirstChild(
+            soundType
+        )
+
+    if existing
+        and existing:IsA("Sound")
+    then
+
+        RegisterSound(
+            existing,
+            soundType
+        )
+
+        if not existing.IsPlaying then
+            existing:Play()
+        end
+
+        return existing
+    end
+
+    --==================================================--
+    -- CREATE NEW SOUND
+    --==================================================--
 
     local sound =
         CreateSound(
+
             facePart,
+
             soundId,
-            volume,
-            playbackSpeed,
-            name,
+
+            volume ~= nil
+                and volume
+                or 1,
+
+            playbackSpeed ~= nil
+                and playbackSpeed
+                or 1,
+
+            soundType,
+
             true
         )
 
     if not sound then
-        return
+        return nil
     end
 
     sound.RollOffMode =
         Enum.RollOffMode.InverseTapered
 
-    sound.RollOffMinDistance = 5
+    sound.RollOffMinDistance =
+        5
 
     sound.RollOffMaxDistance =
-        rollOffMaxDistance or 240
+        tonumber(
+            rollOffMaxDistance
+        )
+        or 240
 
-    ActiveSounds[sound] = true
+    sound.EmitterSize = 5
 
-    -- Store the ONE NearRush instance.
-
-    if name == "NearRush" then
-        NearRushSoundInstance = sound
-    end
+    RegisterSound(
+        sound,
+        soundType
+    )
 
     sound:Play()
+
+    return sound
 end
+
+--// fade BOTH rush sounds //--
 
 local function FadeOutActiveSounds(
     duration
@@ -1348,70 +1678,99 @@ local function FadeOutActiveSounds(
 
     duration =
         math.max(
-            tonumber(duration) or 3,
+            tonumber(duration)
+            or 0.9,
             0
         )
 
     local soundsToFade = {}
 
-    for sound, _ in pairs(
+    for sound in pairs(
         ActiveSounds
-    ) do
-
-        table.insert(
-            soundsToFade,
-            sound
-        )
-    end
-
-    table.clear(
-        ActiveSounds
-    )
-
-    -- Clear the reference immediately
-    -- so another entity cannot accidentally
-    -- reuse the old sound.
-
-    NearRushSoundInstance = nil
-
-    for _, sound in ipairs(
-        soundsToFade
     ) do
 
         if sound
             and sound.Parent
         then
 
-            local tween =
-                TweenService:Create(
-                    sound,
+            soundsToFade[#soundsToFade + 1] =
+                sound
 
-                    TweenInfo.new(
-                        duration,
-                        Enum.EasingStyle.Linear,
-                        Enum.EasingDirection.Out
-                    ),
+        else
 
-                    {
-                        Volume = 0
-                    }
+            UnregisterSound(
+                sound
+            )
+        end
+    end
+
+    -- IMPORTANT:
+    -- We DO NOT clear ActiveSounds here.
+    -- The sounds remain managed while fading.
+
+    for _, sound in ipairs(
+        soundsToFade
+    ) do
+
+        if sound.Parent then
+
+            if duration <= 0 then
+
+                StopSound(
+                    sound
                 )
 
-            tween:Play()
+            else
 
-            task.delay(
-                duration,
-                function()
-                    SafeDestroy(sound)
-                end
-            )
+                local tween =
+                    TweenService:Create(
+
+                        sound,
+
+                        TweenInfo.new(
+                            duration,
+                            Enum.EasingStyle.Linear,
+                            Enum.EasingDirection.Out
+                        ),
+
+                        {
+                            Volume = 0
+                        }
+                    )
+
+                tween:Play()
+
+                task.delay(
+                    duration,
+                    function()
+
+                        if sound
+                            and sound.Parent
+                        then
+
+                            StopSound(
+                                sound
+                            )
+
+                        else
+
+                            UnregisterSound(
+                                sound
+                            )
+
+                        end
+                    end
+                )
+            end
         end
     end
 end
 
 --// despawn sound //--
 
-local function PlayDespawnSound(config)
+local function PlayDespawnSound(
+    config
+)
 
     local playerGui =
         LocalPlayer:FindFirstChildOfClass(
@@ -1424,11 +1783,17 @@ local function PlayDespawnSound(config)
 
     local sound =
         CreateSound(
+
             playerGui,
+
             config.DespawnSound,
+
             config.DespawnVolume,
+
             config.DespawnPlaybackSpeed,
+
             "V3DespawnSound",
+
             false
         )
 
@@ -1439,11 +1804,16 @@ local function PlayDespawnSound(config)
     sound:Play()
 
     task.delay(
+
         config.DespawnSoundTimeout
         or 5,
 
         function()
-            SafeDestroy(sound)
+
+            SafeDestroy(
+                sound
+            )
+
         end
     )
 end
@@ -1466,7 +1836,9 @@ local function Preload(config)
         end
 
         local asset =
-            Instance.new(className)
+            Instance.new(
+                className
+            )
 
         asset.Name =
             "V3Preload"
@@ -1560,24 +1932,29 @@ local function Preload(config)
     if #assets > 0 then
 
         pcall(function()
+
             ContentProvider:PreloadAsync(
                 assets
             )
-        end)
 
+        end)
     end
 
     for _, asset in ipairs(
         assets
     ) do
 
-        SafeDestroy(asset)
+        SafeDestroy(
+            asset
+        )
     end
 end
 
 --// jumpscare //--
 
-local function RunJumpscare(config)
+local function RunJumpscare(
+    config
+)
 
     local data =
         config.Jumpscare
@@ -1598,7 +1975,9 @@ local function RunJumpscare(config)
     end
 
     local gui =
-        Instance.new("ScreenGui")
+        Instance.new(
+            "ScreenGui"
+        )
 
     gui.Name =
         "V3EntityJumpscare"
@@ -1611,9 +1990,12 @@ local function RunJumpscare(config)
         playerGui
 
     local flash =
-        Instance.new("Frame")
+        Instance.new(
+            "Frame"
+        )
 
-    flash.Name = "Flash"
+    flash.Name =
+        "Flash"
 
     flash.Size =
         UDim2.fromScale(
@@ -1631,9 +2013,12 @@ local function RunJumpscare(config)
     flash.Parent = gui
 
     local image =
-        Instance.new("ImageLabel")
+        Instance.new(
+            "ImageLabel"
+        )
 
-    image.Name = "Face"
+    image.Name =
+        "Face"
 
     image.AnchorPoint =
         Vector2.new(
@@ -1648,11 +2033,13 @@ local function RunJumpscare(config)
         )
 
     image.BackgroundTransparency = 1
+
     image.ScaleType =
         Enum.ScaleType.Fit
 
     local startSize =
-        data.StartSize or 0.2
+        data.StartSize
+        or 0.2
 
     image.Size =
         UDim2.fromScale(
@@ -1664,7 +2051,8 @@ local function RunJumpscare(config)
         data.Image
         or config.FaceId
 
-    image.Parent = gui
+    image.Parent =
+        gui
 
     local sound
 
@@ -1674,7 +2062,9 @@ local function RunJumpscare(config)
     then
 
         sound =
-            Instance.new("Sound")
+            Instance.new(
+                "Sound"
+            )
 
         sound.Name =
             "JumpscareSound"
@@ -1683,7 +2073,8 @@ local function RunJumpscare(config)
             data.Sound
 
         sound.Volume =
-            data.Volume or 1
+            data.Volume
+            or 1
 
         sound.Looped = false
         sound.Parent = gui
@@ -1717,7 +2108,11 @@ local function RunJumpscare(config)
             )
 
         local black =
-            Color3.new(0, 0, 0)
+            Color3.new(
+                0,
+                0,
+                0
+            )
 
         flash.BackgroundColor3 =
             flashColor
@@ -1756,7 +2151,8 @@ local function RunJumpscare(config)
                     and flashColor
                     or black
 
-                flash.BackgroundTransparency = 0
+                flash.BackgroundTransparency =
+                    0
 
                 task.wait(
                     flashSpeed
@@ -1766,13 +2162,16 @@ local function RunJumpscare(config)
 
     else
 
-        flash.BackgroundTransparency = 1
+        flash.BackgroundTransparency =
+            1
     end
 
     local wiggleAngle =
-        data.WiggleAngle or 15
+        data.WiggleAngle
+        or 15
 
     TweenService:Create(
+
         image,
 
         TweenInfo.new(
@@ -1842,9 +2241,13 @@ local function RunJumpscare(config)
         end
     end)
 
-    task.wait(duration)
+    task.wait(
+        duration
+    )
 
-    SafeDestroy(gui)
+    SafeDestroy(
+        gui
+    )
 end
 
 --// V3 → V2 config //--
@@ -1857,11 +2260,13 @@ local function BuildV2Config(
     return {
 
         Entity = {
+
             Name =
                 config.EntityName
                 or "CustomEntity",
 
-            Asset = model,
+            Asset =
+                model,
 
             HeightOffset =
                 config.HeightOffset
@@ -1869,6 +2274,7 @@ local function BuildV2Config(
         },
 
         Movement = {
+
             Speed =
                 (
                     config.Movement
@@ -1905,6 +2311,7 @@ local function BuildV2Config(
         },
 
         Damage = {
+
             Enabled =
                 (
                     config.Damage
@@ -1935,7 +2342,9 @@ local function BuildV2Config(
         },
 
         Lights = {
+
             Flicker = {
+
                 Enabled =
                     (
                         config.Lights
@@ -1969,6 +2378,7 @@ local function BuildV2Config(
         },
 
         Earthquake = {
+
             Enabled =
                 (
                     config.Earthquake
@@ -1978,6 +2388,7 @@ local function BuildV2Config(
         },
 
         CameraShake = {
+
             Enabled =
                 (
                     config.CameraShake
@@ -2006,6 +2417,7 @@ local function BuildV2Config(
         },
 
         Crucifixion = {
+
             Type =
                 (
                     config.Crucifixion
@@ -2043,6 +2455,7 @@ local function BuildV2Config(
         },
 
         Rebounding = {
+
             Enabled =
                 (
                     config.Rebounding
@@ -2080,6 +2493,7 @@ local function BuildV2Config(
         },
 
         Death = {
+
             Type =
                 (
                     config.Death
@@ -2116,9 +2530,12 @@ local function SetupCallbacks(
             EntityActive = true
             CurrentEntity = entity
 
-            -- New entity means a new
-            -- NearRush instance is allowed.
+            -- New entity gets fresh rush state.
+            -- We do NOT touch another sound
+            -- independently here because Spawn()
+            -- already cleaned old entity sounds.
 
+            FarRushSoundInstance = nil
             NearRushSoundInstance = nil
 
             local model =
@@ -2160,23 +2577,41 @@ local function SetupCallbacks(
         end
     )
 
+    --==================================================--
+    -- FAR RUSH
+    --==================================================--
+
     entity:SetCallback(
         "OnStartMoving",
         function()
 
+            if not EntityActive then
+                return
+            end
+
             local model =
                 entity.Model
+                or entity.model
 
             if not model then
                 return
             end
 
+            -- FAR RUSH ONLY STARTS FAR.
+            -- It does NOT care whether NearRush exists.
+
             PlayRushSound(
+
                 model,
+
                 config.FarRushSound,
+
                 config.FarVolume,
+
                 config.FarPlaybackSpeed,
+
                 "FarRush",
+
                 config.FarRollOffMaxDistance
             )
         end
@@ -2185,27 +2620,31 @@ local function SetupCallbacks(
     entity:SetCallback(
         "OnReachedNode",
         function(...)
+
             if not EntityActive then
                 return
             end
+
         end
     )
 
-    --====================================================--
+    --==================================================--
     -- NEAR RUSH
-    --====================================================--
+    --==================================================--
 
     local LastNearRushRoom = nil
 
     entity:SetCallback(
         "OnEnterRoom",
-        function(room, firstTime)
+        function(
+            room,
+            firstTime
+        )
 
             if not EntityActive then
                 return
             end
 
-            -- Brain may report the same room again.
             if not firstTime then
                 return
             end
@@ -2216,12 +2655,11 @@ local function SetupCallbacks(
                     and room.Name
                 )
 
-            -- Extra room-level duplicate protection.
-
             if roomNumber
                 and LastNearRushRoom
                     == roomNumber
             then
+
                 return
             end
 
@@ -2230,20 +2668,31 @@ local function SetupCallbacks(
 
             local model =
                 entity.Model
+                or entity.model
 
             if not model then
                 return
             end
 
-            -- PlayRushSound() has its own
-            -- instance-level duplicate protection too.
+            -- NEAR RUSH STARTS.
+            --
+            -- IMPORTANT:
+            -- We do NOT stop FarRush.
+            --
+            -- They can BOTH play.
 
             PlayRushSound(
+
                 model,
+
                 config.NearRushSound,
+
                 config.NearVolume,
+
                 config.NearPlaybackSpeed,
+
                 "NearRush",
+
                 config.NearRollOffMaxDistance
             )
         end
@@ -2252,24 +2701,35 @@ local function SetupCallbacks(
     entity:SetCallback(
         "OnLookAt",
         function(...)
+
             if not EntityActive then
                 return
             end
+
         end
     )
 
     entity:SetCallback(
         "OnRebounding",
         function(...)
+
             if not EntityActive then
                 return
             end
+
         end
     )
+
+    --==================================================--
+    -- DESPAWNING
+    --==================================================--
 
     entity:SetCallback(
         "OnDespawning",
         function()
+
+            -- Fade BOTH sounds together.
+            -- Neither one cancels the other.
 
             FadeOutActiveSounds(
                 0.9
@@ -2295,6 +2755,14 @@ local function SetupCallbacks(
                 config
             )
 
+            -- Normally OnDespawning already
+            -- faded the rush sounds.
+            --
+            -- Stop anything still alive just
+            -- in case the V2 brain skipped it.
+
+            StopAllActiveSounds()
+
             PlayDespawnSound(
                 config
             )
@@ -2309,6 +2777,7 @@ local function SetupCallbacks(
                     CleanupAssetFiles(
                         ownedAssets
                     )
+
                 end
             )
         end
@@ -2324,8 +2793,8 @@ local function SetupCallbacks(
 
             local humanoid =
                 LocalPlayer.Character
-                and LocalPlayer.Character
-                    :FindFirstChildOfClass(
+                and LocalPlayer.Character:
+                    FindFirstChildOfClass(
                         "Humanoid"
                     )
 
@@ -2343,12 +2812,15 @@ local function SetupCallbacks(
                     and config.Jumpscare.Enabled
                 then
 
-                    task.spawn(function()
-                        RunJumpscare(
-                            config
-                        )
-                    end)
+                    task.spawn(
+                        function()
 
+                            RunJumpscare(
+                                config
+                            )
+
+                        end
+                    )
                 end
             end
         end
@@ -2367,6 +2839,7 @@ local function StartHybridMovement(
         or config.Movement.FollowPlayer
             ~= true
     then
+
         return
     end
 
@@ -2425,8 +2898,6 @@ local function StartHybridMovement(
         tonumber(spawnTime)
         or os.clock()
 
-    --// PLAYER ROOT //--
-
     local function GetPlayerRoot()
 
         local character =
@@ -2441,12 +2912,10 @@ local function StartHybridMovement(
                 "HumanoidRootPart"
             )
             or character:
-                FindFirstChild(
-                    "Root"
-                )
+            FindFirstChild(
+                "Root"
+            )
     end
-
-    --// ROOM NUMBER //--
 
     local function GetRoomNumber(room)
 
@@ -2458,8 +2927,6 @@ local function StartHybridMovement(
             room.Name
         )
     end
-
-    --// ROOM AT POSITION //--
 
     local function GetRoomAtPosition(
         position
@@ -2481,6 +2948,7 @@ local function StartHybridMovement(
                     tonumber(b.Name)
                     or math.huge
                 )
+
             end
         )
 
@@ -2489,7 +2957,9 @@ local function StartHybridMovement(
         ) do
 
             local roomNumber =
-                tonumber(room.Name)
+                tonumber(
+                    room.Name
+                )
 
             if roomNumber then
 
@@ -2517,6 +2987,7 @@ local function StartHybridMovement(
 
                     local result =
                         workspace:Raycast(
+
                             position
                             + Vector3.new(
                                 0,
@@ -2542,8 +3013,6 @@ local function StartHybridMovement(
 
         return nil
     end
-
-    --// PLAYER ROOM //--
 
     local function GetPlayerRoom()
 
@@ -2579,8 +3048,6 @@ local function StartHybridMovement(
         )
     end
 
-    --// ROOM NODES //--
-
     local function GetNodesFromRoom(
         room
     )
@@ -2590,8 +3057,6 @@ local function StartHybridMovement(
         if not room then
             return nodes
         end
-
-        -- ROOM ENTRANCE
 
         local roomEntrance =
             room:FindFirstChild(
@@ -2615,8 +3080,6 @@ local function StartHybridMovement(
             nodes[#nodes + 1] =
                 node
         end
-
-        -- PATHFIND NODES
 
         local nodesFolder =
             room:FindFirstChild(
@@ -2644,6 +3107,7 @@ local function StartHybridMovement(
                         tonumber(b.Name)
                         or math.huge
                     )
+
                 end
             )
 
@@ -2651,14 +3115,15 @@ local function StartHybridMovement(
                 roomNodes
             ) do
 
-                if node:IsA("BasePart") then
+                if node:IsA(
+                    "BasePart"
+                ) then
+
                     nodes[#nodes + 1] =
                         node
                 end
             end
         end
-
-        -- ROOM EXIT
 
         local roomExit =
             room:FindFirstChild(
@@ -2689,8 +3154,6 @@ local function StartHybridMovement(
         return nodes
     end
 
-    --// NODE POSITION //--
-
     local function GetNodePosition(
         node
     )
@@ -2698,20 +3161,21 @@ local function StartHybridMovement(
         return (
             node.CFrame
             + Vector3.new(
+
                 0,
+
                 3
-                    + (
-                        tonumber(
-                            config.HeightOffset
-                        )
-                        or 0
-                    ),
+                + (
+                    tonumber(
+                        config.HeightOffset
+                    )
+                    or 0
+                ),
+
                 0
             )
         ).Position
     end
-
-    --// INITIAL ENTITY ROOM //--
 
     local function GetEntityRoom()
 
@@ -2731,9 +3195,8 @@ local function StartHybridMovement(
             return room
         end
 
-        -- Fallback: nearest node
-
         local nearestRoom = nil
+
         local nearestDistance =
             math.huge
 
@@ -2782,13 +3245,12 @@ local function StartHybridMovement(
         if nearestRoom
             and nearestDistance <= 150
         then
+
             return nearestRoom
         end
 
         return nil
     end
-
-    --// ORDERED ROOMS //--
 
     local function GetOrderedRooms()
 
@@ -2798,9 +3260,13 @@ local function StartHybridMovement(
             CurrentRooms:GetChildren()
         ) do
 
-            if tonumber(room.Name) then
+            if tonumber(
+                room.Name
+            ) then
+
                 rooms[#rooms + 1] =
                     room
+
             end
         end
 
@@ -2810,13 +3276,12 @@ local function StartHybridMovement(
 
                 return tonumber(a.Name)
                     < tonumber(b.Name)
+
             end
         )
 
         return rooms
     end
-
-    --// BUILD ROUTE //--
 
     local function BuildRoute(
         startRoomNumber,
@@ -2829,12 +3294,14 @@ local function StartHybridMovement(
         if not startRoomNumber
             or not targetRoomNumber
         then
+
             return route
         end
 
         if startRoomNumber
             == targetRoomNumber
         then
+
             return route
         end
 
@@ -2848,7 +3315,9 @@ local function StartHybridMovement(
         ) do
 
             local number =
-                GetRoomNumber(room)
+                GetRoomNumber(
+                    room
+                )
 
             if number then
                 roomMap[number] =
@@ -2861,8 +3330,6 @@ local function StartHybridMovement(
             > startRoomNumber
             and 1
             or -1
-
-        -- STARTING ROOM
 
         local startRoom =
             roomMap[
@@ -2921,7 +3388,10 @@ local function StartHybridMovement(
                     do
 
                         route[#route + 1] = {
-                            Node = nodes[i],
+
+                            Node =
+                                nodes[i],
+
                             RoomNumber =
                                 startRoomNumber
                         }
@@ -2936,7 +3406,10 @@ local function StartHybridMovement(
                     do
 
                         route[#route + 1] = {
-                            Node = nodes[i],
+
+                            Node =
+                                nodes[i],
+
                             RoomNumber =
                                 startRoomNumber
                         }
@@ -2944,8 +3417,6 @@ local function StartHybridMovement(
                 end
             end
         end
-
-        -- FOLLOW LOADED ROOMS ONLY
 
         local currentRoomNumber =
             startRoomNumber
@@ -2974,7 +3445,9 @@ local function StartHybridMovement(
                 ) do
 
                     route[#route + 1] = {
+
                         Node = node,
+
                         RoomNumber =
                             currentRoomNumber
                     }
@@ -2989,6 +3462,7 @@ local function StartHybridMovement(
                 do
 
                     route[#route + 1] = {
+
                         Node =
                             nodes[i],
 
@@ -3001,6 +3475,7 @@ local function StartHybridMovement(
             if currentRoomNumber
                 == targetRoomNumber
             then
+
                 break
             end
 
@@ -3010,8 +3485,6 @@ local function StartHybridMovement(
 
         return route
     end
-
-    --// DIRECT MOVEMENT //--
 
     local function MoveToward(
         targetPosition,
@@ -3038,6 +3511,7 @@ local function StartHybridMovement(
         if distance <= 0.15 then
 
             model:PivotTo(
+
                 CFrame.new(
                     targetPosition
                 )
@@ -3107,6 +3581,7 @@ local function StartHybridMovement(
     task.spawn(function()
 
         if movementDelay > 0 then
+
             task.wait(
                 movementDelay
             )
@@ -3126,8 +3601,6 @@ local function StartHybridMovement(
 
         local logicalEntityRoomNumber =
             nil
-
-        --// INITIAL ROOM //--
 
         do
 
@@ -3154,16 +3627,14 @@ local function StartHybridMovement(
             return
         end
 
-        --// ROUTE RESET //--
-
         local function ResetRoute()
 
-            table.clear(route)
+            table.clear(
+                route
+            )
 
             routeIndex = 1
         end
-
-        --// ROUTE REBUILD //--
 
         local function RebuildRoute(
             playerRoomNumber
@@ -3174,20 +3645,22 @@ local function StartHybridMovement(
             if not logicalEntityRoomNumber
                 or not playerRoomNumber
             then
+
                 return
             end
 
             route =
                 BuildRoute(
+
                     logicalEntityRoomNumber,
+
                     playerRoomNumber,
+
                     model:GetPivot().Position
                 )
 
             routeIndex = 1
         end
-
-        --// HEARTBEAT //--
 
         connection =
             RunService.Heartbeat:Connect(
@@ -3199,8 +3672,6 @@ local function StartHybridMovement(
 
                         return
                     end
-
-                    -- DESPAWN TIMER
 
                     if despawnTime > 0
                         and (
@@ -3219,21 +3690,27 @@ local function StartHybridMovement(
                                 true
                             )
 
-                            task.spawn(function()
+                            task.spawn(
+                                function()
 
-                                pcall(function()
+                                    pcall(
+                                        function()
 
-                                    entity:RunCallback(
-                                        "OnDespawning"
+                                            entity:RunCallback(
+                                                "OnDespawning"
+                                            )
+
+                                        end
                                     )
 
-                                end)
+                                end
+                            )
 
-                            end)
-
-                            pcall(function()
-                                entity:Despawn()
-                            end)
+                            pcall(
+                                function()
+                                    entity:Despawn()
+                                end
+                            )
                         end
 
                         connection:Disconnect()
@@ -3241,16 +3718,12 @@ local function StartHybridMovement(
                         return
                     end
 
-                    -- PLAYER ROOT
-
                     local playerRoot =
                         GetPlayerRoot()
 
                     if not playerRoot then
                         return
                     end
-
-                    -- PLAYER ROOM
 
                     local playerRoom =
                         GetPlayerRoom()
@@ -3287,9 +3760,6 @@ local function StartHybridMovement(
                         return
                     end
 
-                    -- DIFFERENT ROOM
-                    -- = NODE MOVEMENT
-
                     local playerRoomChanged =
                         lastPlayerRoomNumber
                         ~= playerRoomNumber
@@ -3308,13 +3778,9 @@ local function StartHybridMovement(
                             playerRoomNumber
                     end
 
-                    -- NO CURRENT ROUTE
-
                     if #route == 0 then
                         return
                     end
-
-                    -- CURRENT NODE
 
                     local routeData =
                         route[routeIndex]
@@ -3339,8 +3805,6 @@ local function StartHybridMovement(
                         return
                     end
 
-                    -- MOVE
-
                     local targetPosition =
                         GetNodePosition(
                             node
@@ -3352,20 +3816,18 @@ local function StartHybridMovement(
                             deltaTime
                         )
 
-                    -- NODE REACHED
-
                     if reached then
 
-                        pcall(function()
+                        pcall(
+                            function()
 
-                            entity:RunCallback(
-                                "OnReachedNode",
-                                node
-                            )
+                                entity:RunCallback(
+                                    "OnReachedNode",
+                                    node
+                                )
 
-                        end)
-
-                        -- ADVANCE LOGICAL ROOM
+                            end
+                        )
 
                         if nodeRoomNumber
                             and nodeRoomNumber
@@ -3377,8 +3839,6 @@ local function StartHybridMovement(
                         end
 
                         routeIndex += 1
-
-                        -- ROUTE COMPLETED
 
                         if routeIndex
                             > #route
@@ -3392,15 +3852,15 @@ local function StartHybridMovement(
                 end
             )
 
-        --// CLEANUP //--
-
         task.spawn(function()
 
             while model.Parent
                 and entity:IsAlive()
             do
 
-                task.wait(0.25)
+                task.wait(
+                    0.25
+                )
             end
 
             if connection then
@@ -3414,7 +3874,9 @@ end
 
 --// SPAWN //--
 
-function Brain.Spawn(config)
+function Brain.Spawn(
+    config
+)
 
     if typeof(config) ~= "table" then
 
@@ -3424,6 +3886,10 @@ function Brain.Spawn(config)
         )
     end
 
+    --==================================================--
+    -- CLEAN OLD ENTITY COMPLETELY
+    --==================================================--
+
     if CurrentEntity then
 
         pcall(function()
@@ -3432,15 +3898,19 @@ function Brain.Spawn(config)
 
         CurrentEntity = nil
         EntityActive = false
-
-        -- Make absolutely sure the old
-        -- NearRush reference is gone.
-
-        NearRushSoundInstance = nil
     end
 
+    -- IMPORTANT:
+    -- Kill ONLY the OLD entity's sounds here.
+    -- This does NOT affect FarRush vs NearRush
+    -- on the NEW entity.
+
+    StopAllActiveSounds()
+
     local model =
-        PrepareModel(config)
+        PrepareModel(
+            config
+        )
 
     local assetList =
         ResolveConfigAssets(
@@ -3459,9 +3929,12 @@ function Brain.Spawn(config)
             return Original:Create(
                 v2Config
             )
+
         end)
 
-    if not ok or not entity then
+    if not ok
+        or not entity
+    then
 
         CleanupAssetFiles(
             assetList
@@ -3522,10 +3995,12 @@ function Brain.Spawn(config)
 end
 
 function Brain.GetCurrentEntity()
+
     return CurrentEntity
 end
 
 function Brain.IsActive()
+
     return EntityActive
 end
 
@@ -3544,9 +4019,8 @@ function Brain.Despawn()
     EntityActive = false
     CurrentEntity = nil
 
-    -- Clear sound state.
-
-    NearRushSoundInstance = nil
+    -- Both rush sounds belong to the
+    -- same entity and are cleaned together.
 
     StopAllActiveSounds()
 end
