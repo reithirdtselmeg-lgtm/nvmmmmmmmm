@@ -1371,7 +1371,12 @@ local function StartCustomDamage(entity, config)
             if damageType == "LOOK_AND_HURT"
                 or damageType == "LOOK_AND_HURT_OPPOSITE"
             then
-                range = tonumber(config.Damage.LookRange) or 8
+                -- LookRange wins if set, then Damage.Range, then the 8 stud default.
+                -- (Previously Damage.Range was ignored here, so a stationary
+                -- NON-NODE entity only ever hurt inside 8 studs.)
+                range = tonumber(config.Damage.LookRange)
+                    or tonumber(config.Damage.Range)
+                    or 8
                 cone = tonumber(config.Damage.LookCone) or 55
             end
 
