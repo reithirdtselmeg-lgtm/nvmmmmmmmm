@@ -1344,9 +1344,22 @@ local function StartCustomDamage(entity, config)
     local model = entity.Model or entity.model
     if not model then return end
     model:SetAttribute("Damage", true)
+
+    -- Fixed grace period (intentionally NOT configurable): look-based
+    -- damage cannot start until 0.8s after the entity has spawned in the
+    -- room, so a player who is already looking that way when it appears
+    -- doesn't get hurt by accident. The clock starts right now, which is
+    -- when the entity is placed in the room.
+    local LOOK_DAMAGE_START_DELAY = 0.8
+    local damageStartTime = os.clock() + LOOK_DAMAGE_START_DELAY
+
     task.spawn(function()
         while entity:IsAlive() and model.Parent do
             task.wait()
+
+            if os.clock() < damageStartTime then
+                continue
+            end
 
             if model:GetAttribute("Paused")
                 or model:GetAttribute("BeingBanished")
