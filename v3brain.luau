@@ -78,6 +78,7 @@ local ContentProvider = game:GetService("ContentProvider")
 local Lighting = game:GetService("Lighting")
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
 --// V2 SOURCE //--
 local V2_URL =
@@ -1322,6 +1323,63 @@ local function GetLookState(entityModel, range, cone, strictWalls)
     return math.acos(dot) <= halfCone
 end
 
+-- V2's death-cause/hint system only fires inside V2's own DamagePlayer
+-- function, which only runs for V2's own RANGE damage detection loop.
+-- Any death caused a different way (V3's LOOK_AND_HURT /
+-- LOOK_AND_HURT_OPPOSITE damage below, or any other script setting
+-- Humanoid.Health directly) never touches it, so the game shows
+-- "Died to Unknown" with no hints even though a custom entity killed
+-- the player. This replicates V2's own logic so those deaths get
+-- attributed correctly too.
+local DeathTypeColors = {
+    ["Yellow"] = {"yellow", "curious"},
+    ["Blue"] = {"blue", "guiding"}
+}
+local function ApplyDeathAttribution(config)
+    local death = config.Death or {}
+    local playerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+
+    -- Death hints (only if the config actually supplies any, same as V2)
+    local hints = death.Hints
+    if typeof(hints) == "table" and #hints > 0 then
+        pcall(function()
+            local mainUI = playerGui and playerGui:FindFirstChild("MainUI")
+            local deathFrame = mainUI and mainUI:FindFirstChild("Death")
+            if deathFrame and not deathFrame.Visible then
+                deathFrame:GetPropertyChangedSignal("Visible"):Wait()
+            end
+
+            local deathType = tostring(death.Type or "Guiding"):lower()
+            local colour = nil
+            for name, values in pairs(DeathTypeColors) do
+                if table.find(values, deathType) then
+                    colour = name
+                end
+            end
+            colour = colour or "Blue"
+
+            local remotes = ReplicatedStorage:FindFirstChild("RemotesFolder")
+            local deathHintRemote = remotes and remotes:FindFirstChild("DeathHint")
+            if deathHintRemote and typeof(firesignal) == "function" then
+                firesignal(deathHintRemote.OnClientEvent, hints, colour)
+            else
+                warn("V3 Brain: could not fire death hints (firesignal or DeathHint remote missing).")
+            end
+        end)
+    end
+
+    -- Death cause, so it isn't left as "Unknown"
+    pcall(function()
+        local gameStats = ReplicatedStorage:FindFirstChild("GameStats")
+        local statsFolder = gameStats and gameStats:FindFirstChild("Player_" .. LocalPlayer.Name)
+        local deathCause = statsFolder
+            and statsFolder:FindFirstChild("Total")
+            and statsFolder.Total:FindFirstChild("DeathCause")
+        if deathCause then
+            deathCause.Value = config.EntityName or "Custom Entity"
+        end
+    end)
+end
 local function DamageCustom(entity, config)
     local character = LocalPlayer.Character
     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
@@ -1337,6 +1395,14 @@ local function DamageCustom(entity, config)
     entity.__V3LastDamage = now
     humanoid.Health = newHealth
     pcall(function() entity:RunCallback("OnDamagePlayer", newHealth) end)
+
+    -- This damage bypassed V2's own DamagePlayer, so V2's death-cause/hint
+    -- system never saw it. Apply it here, once per life, so the player
+    -- isn't left with "Died to Unknown" and no hints.
+    if newHealth == 0 and not entity.__V3DeathAttributed then
+        entity.__V3DeathAttributed = true
+        ApplyDeathAttribution(config)
+    end
 end
 local function StartCustomDamage(entity, config)
     local damageType = NormalizeType(config.Damage and config.Damage.Type, "RANGE")
