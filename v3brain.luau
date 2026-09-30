@@ -14,40 +14,6 @@ Movement.Type = "NON-NODE"
     enables V3 direct player movement; otherwise the entity can remain
     stationary while its V3 damage mechanic operates.
 
-Movement.Type = "CHASER"
-    "CHASER" is the PUBLIC / CONFIGURATION name.
-    Internally it is a V3-owned, room-aware chase controller
-    (see StartChaserMovement).
-
-        entity in a DIFFERENT room than the player
-            -> follow RoomEntrance / PathfindNodes / RoomExit
-               through every loaded room toward the player's room
-        entity in the SAME room as the player
-            -> stop following nodes, chase the player directly
-        player changes room
-            -> the route is rebuilt toward the new room
-
-    Movement.Speed controls BOTH node travel and the direct chase.
-    Movement.FollowPlayer / Movement.Target = "PLAYER" identify the player
-    as the target, but CHASER itself owns all of the movement logic.
-
-    There is exactly ONE movement authority for CHASER: V3.
-    V2's node system is locked out three ways:
-        1. BuildV2Config forces FollowPlayer = true for V2 (V2 skips nodes)
-        2. the model gets the attribute "V3ChaserMovement" = true
-        3. PatchV2Source makes V2 also skip nodes when that attribute is set
-
-    Example:
-        Movement = {
-            Type = "CHASER",
-            Speed = 19,
-            Delay = 1,
-            Reversed = false,
-            FollowPlayer = true,
-            Target = "PLAYER",
-            FollowPlayerDespawnTime = 150
-        }
-
 Damage.Type = "RANGE"
     Uses V2's normal range + line-of-sight damage.
 
@@ -62,6 +28,18 @@ Damage.Type = "LOOK_AND_HURT_OPPOSITE"
     The entity must be visible and inside range, but outside the look cone.
     Solid raycast obstacles protect the player completely.
     The opposite mechanic cannot damage through walls/obstacles.
+
+Damage.Type = "CROUCH_AND_NO_HURT"
+    A different detection axis entirely: no look check, no wall check.
+    While the player is inside range, they take damage UNLESS they are
+    crouching, in which case they take none at all.
+    Damage.Range (default 20) is configurable. Crouch state comes from
+    hooking the game's own ReplicatedStorage.RemotesFolder.Crouch remote
+    (Event:FireServer(true/false)) at load time, so it reflects the
+    real crouch state exactly, with no attribute guessing involved.
+    If hooking fails (executor without hookfunction, or the remote is
+    missing), it falls back to Character:GetAttribute(Damage.CrouchAttribute),
+    then to treating horizontal speed under 3 studs/sec as crouching.
 
 BanishmentSound = {
     Id = "139310882854462",
@@ -283,25 +261,6 @@ local function PatchV2Source(source)
     if despawnCount == 0 then
         warn("V3 Brain: V2 despawn movement patch " .. "matched 0 occurrences.")
     end
-    --// CHASER lock //--
-    -- V2 skips its whole node/pathfinding task when FollowPlayer == true.
-    -- CHASER entities already get FollowPlayer = true from BuildV2Config,
-    -- but this second lock makes V2 ALSO skip nodes whenever the model
-    -- carries the internal V3ChaserMovement attribute. That way V2 can
-    -- never independently move a CHASER entity, even if the config
-    -- value is ever changed by mistake. Normal NODE entities never carry
-    -- the attribute, so their V2 node behavior is untouched.
-    local chaserPattern =
-        'if config%.Movement%.FollowPlayer == true then'
-    local chaserReplacement =
-        'if config.Movement.FollowPlayer == true or model:GetAttribute("V3ChaserMovement") == true then'
-    local chaserSource, chaserCount =
-        patchedSource:gsub(chaserPattern, chaserReplacement)
-    patchedSource = chaserSource
-    if chaserCount == 0 then
-        warn("V3 Brain: V2 CHASER lock patch matched 0 occurrences. "
-            .. "CHASER is still protected by FollowPlayer = true.")
-    end
     return patchedSource
 end
 --// Load patched V2 //--
@@ -378,6 +337,38 @@ do
     end
     Original = result
     getgenv().VynixuEntitySpawnerV2 = Original
+end
+--// crouch tracking //--
+-- CROUCH_AND_NO_HURT needs the player's real crouch state. The game fires
+-- ReplicatedStorage.RemotesFolder.Crouch:FireServer(true/false) when the
+-- player starts/stops crouching, so hooking that call captures the exact
+-- state the moment it changes, with no attribute guessing involved.
+local PlayerCrouching = false
+local RemoteCrouchHookActive = false
+do
+    local ok = pcall(function()
+        local remotes = ReplicatedStorage:WaitForChild("RemotesFolder", 10)
+        local crouchRemote = remotes and remotes:WaitForChild("Crouch", 10)
+        if not crouchRemote then
+            warn("V3 Brain: Crouch remote not found, CROUCH_AND_NO_HURT will fall back to attribute/speed detection.")
+            return
+        end
+        if typeof(hookfunction) ~= "function" or typeof(newcclosure) ~= "function" then
+            warn("V3 Brain: hookfunction/newcclosure unavailable, CROUCH_AND_NO_HURT will fall back to attribute/speed detection.")
+            return
+        end
+        local originalFireServer
+        originalFireServer = hookfunction(crouchRemote.FireServer, newcclosure(function(self, crouching, ...)
+            if self == crouchRemote then
+                PlayerCrouching = crouching == true
+            end
+            return originalFireServer(self, crouching, ...)
+        end))
+        RemoteCrouchHookActive = true
+    end)
+    if not ok then
+        warn("V3 Brain: failed to hook Crouch remote, CROUCH_AND_NO_HURT will fall back to attribute/speed detection.")
+    end
 end
 --// colors //--
 local AuraColors = {
@@ -1047,14 +1038,12 @@ local function BuildV2Config(config, model)
     -- V2 skips its ENTIRE node system when Movement.FollowPlayer == true.
     --
     --   NON-NODE : V2 must not move it -> FollowPlayer = true for V2
-    --   CHASER   : V2 must not move it -> FollowPlayer = true for V2
-    --              (V3 owns CHASER movement; this is the first of the
-    --               three V2 lockouts, see the header + PatchV2Source)
-    --   NODE     : keeps its own FollowPlayer value (legacy compatible)
+    --   NODE     : keeps its own FollowPlayer value (legacy compatible;
+    --              this is also how a chasing entity is made - see
+    --              StartHybridMovement)
     local v2FollowPlayer =
         (config.Movement and config.Movement.FollowPlayer) == true
         or movementType == "NON-NODE"
-        or movementType == "CHASER"
 
     return {
         Entity = {
@@ -1159,7 +1148,6 @@ local function SetupCallbacks(entity, config, assetList, spawnState)
 
             -- A stationary NON-NODE entity does not pretend to be
             -- starting a V2 node run, so it does not emit rush audio.
-            -- (CHASER always moves, so it always plays the far rush.)
             if movementType == "NON-NODE"
                 and config.Movement
                 and config.Movement.FollowPlayer ~= true
@@ -1323,6 +1311,38 @@ local function GetLookState(entityModel, range, cone, strictWalls)
     return math.acos(dot) <= halfCone
 end
 
+local function GetPlayerCrouchState(entityModel, range, crouchAttribute)
+    local root = GetRoot(entityModel)
+    local playerRoot = GetPlayerRoot()
+    if not root or not playerRoot then return nil end
+
+    local distance = (playerRoot.Position - root.Position).Magnitude
+    if distance > range then return nil end
+
+    -- Prefer the real state captured from the game's own Crouch remote.
+    -- Only fall back to a Character attribute, then a speed heuristic,
+    -- if that hook failed at load time (see the "crouch tracking" block).
+    if RemoteCrouchHookActive then
+        return PlayerCrouching
+    end
+
+    local character = LocalPlayer.Character
+    if not character then return nil end
+
+    local crouching = character:GetAttribute(crouchAttribute)
+
+    if crouching == nil then
+        -- No crouch attribute on this game build either: approximate
+        -- crouching as moving at walking pace or slower (horizontal speed
+        -- only, so falling/jumping never counts as crouching).
+        local velocity = playerRoot.AssemblyLinearVelocity
+        local horizontalSpeed = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
+        crouching = horizontalSpeed <= 3
+    end
+
+    return crouching == true
+end
+
 -- V2's death-cause/hint system only fires inside V2's own DamagePlayer
 -- function, which only runs for V2's own RANGE damage detection loop.
 -- Any death caused a different way (V3's LOOK_AND_HURT /
@@ -1406,7 +1426,12 @@ local function DamageCustom(entity, config)
 end
 local function StartCustomDamage(entity, config)
     local damageType = NormalizeType(config.Damage and config.Damage.Type, "RANGE")
-    if damageType ~= "LOOK_AND_HURT" and damageType ~= "LOOK_AND_HURT_OPPOSITE" then return end
+    if damageType ~= "LOOK_AND_HURT"
+        and damageType ~= "LOOK_AND_HURT_OPPOSITE"
+        and damageType ~= "CROUCH_AND_NO_HURT"
+    then
+        return
+    end
     local model = entity.Model or entity.model
     if not model then return end
     model:SetAttribute("Damage", true)
@@ -1433,65 +1458,93 @@ local function StartCustomDamage(entity, config)
                 continue
             end
 
-            local range = tonumber(config.Damage.Range) or 10
-            local cone = tonumber(config.Damage.LookCone) or 70
+            if damageType == "CROUCH_AND_NO_HURT" then
+                -- Different detection axis entirely: no line-of-sight or
+                -- wall check. In range and crouching = safe. In range and
+                -- NOT crouching = hurt.
+                local range = tonumber(config.Damage.Range) or 20
+                local crouchAttribute = config.Damage.CrouchAttribute or "Crouching"
 
-            -- Both look-based mechanics are intentionally less punishing
-            -- than ordinary RANGE damage.
-            --
-            -- LOOK_AND_HURT:
-            --   default range = 8 studs
-            --   default cone = 55 degrees
-            --
-            -- LOOK_AND_HURT_OPPOSITE:
-            --   default range = 8 studs
-            --   default cone = 55 degrees
-            --   strict wall protection
-            if damageType == "LOOK_AND_HURT"
-                or damageType == "LOOK_AND_HURT_OPPOSITE"
-            then
-                -- LookRange wins if set, then Damage.Range, then the 8 stud default.
-                -- (Previously Damage.Range was ignored here, so a stationary
-                -- NON-NODE entity only ever hurt inside 8 studs.)
-                range = tonumber(config.Damage.LookRange)
-                    or tonumber(config.Damage.Range)
-                    or 8
-                cone = tonumber(config.Damage.LookCone) or 55
-            end
+                local crouching = GetPlayerCrouchState(model, range, crouchAttribute)
 
-            -- LOOK_AND_HURT_OPPOSITE uses strict wall protection.
-            local strictWalls = damageType == "LOOK_AND_HURT_OPPOSITE"
+                -- nil means out of range (or no character) - never hurts.
+                -- crouching == true never hurts either. Only standing/moving
+                -- in range hurts.
+                local shouldHurt = crouching == false
 
-            local lookState = GetLookState(
-                model,
-                range,
-                cone,
-                strictWalls
-            )
+                if shouldHurt then
+                    local crouchCooldown = tonumber(config.Damage.CrouchCooldown)
+                        or (tonumber(config.Damage.Cooldown) or 1)
 
-            -- nil means:
-            --   • out of range, OR
-            --   • blocked by an obstacle/wall
-            --
-            -- In either case the opposite mechanic MUST NOT hurt.
-            local shouldHurt = lookState ~= nil and (
-                (damageType == "LOOK_AND_HURT" and lookState)
-                or
-                (damageType == "LOOK_AND_HURT_OPPOSITE" and not lookState)
-            )
+                    local lastCrouchDamage = entity.__V3LastCrouchDamage or 0
+                    local now = os.clock()
 
-            if shouldHurt then
-                -- Look-based damage gets its own debounce so it cannot repeatedly
-                -- trigger faster than the configured look cooldown.
-                local lookCooldown = tonumber(config.Damage.LookCooldown)
-                    or (tonumber(config.Damage.Cooldown) or 1.5)
+                    if now - lastCrouchDamage >= crouchCooldown then
+                        entity.__V3LastCrouchDamage = now
+                        DamageCustom(entity, config)
+                    end
+                end
+            else
+                local range = tonumber(config.Damage.Range) or 10
+                local cone = tonumber(config.Damage.LookCone) or 70
 
-                local lastLookDamage = entity.__V3LastLookDamage or 0
-                local now = os.clock()
+                -- Both look-based mechanics are intentionally less punishing
+                -- than ordinary RANGE damage.
+                --
+                -- LOOK_AND_HURT:
+                --   default range = 8 studs
+                --   default cone = 55 degrees
+                --
+                -- LOOK_AND_HURT_OPPOSITE:
+                --   default range = 8 studs
+                --   default cone = 55 degrees
+                --   strict wall protection
+                if damageType == "LOOK_AND_HURT"
+                    or damageType == "LOOK_AND_HURT_OPPOSITE"
+                then
+                    -- LookRange wins if set, then Damage.Range, then the 8 stud default.
+                    -- (Previously Damage.Range was ignored here, so a stationary
+                    -- NON-NODE entity only ever hurt inside 8 studs.)
+                    range = tonumber(config.Damage.LookRange)
+                        or tonumber(config.Damage.Range)
+                        or 8
+                    cone = tonumber(config.Damage.LookCone) or 55
+                end
 
-                if now - lastLookDamage >= lookCooldown then
-                    entity.__V3LastLookDamage = now
-                    DamageCustom(entity, config)
+                -- LOOK_AND_HURT_OPPOSITE uses strict wall protection.
+                local strictWalls = damageType == "LOOK_AND_HURT_OPPOSITE"
+
+                local lookState = GetLookState(
+                    model,
+                    range,
+                    cone,
+                    strictWalls
+                )
+
+                -- nil means:
+                --   • out of range, OR
+                --   • blocked by an obstacle/wall
+                --
+                -- In either case the opposite mechanic MUST NOT hurt.
+                local shouldHurt = lookState ~= nil and (
+                    (damageType == "LOOK_AND_HURT" and lookState)
+                    or
+                    (damageType == "LOOK_AND_HURT_OPPOSITE" and not lookState)
+                )
+
+                if shouldHurt then
+                    -- Look-based damage gets its own debounce so it cannot repeatedly
+                    -- trigger faster than the configured look cooldown.
+                    local lookCooldown = tonumber(config.Damage.LookCooldown)
+                        or (tonumber(config.Damage.Cooldown) or 1.5)
+
+                    local lastLookDamage = entity.__V3LastLookDamage or 0
+                    local now = os.clock()
+
+                    if now - lastLookDamage >= lookCooldown then
+                        entity.__V3LastLookDamage = now
+                        DamageCustom(entity, config)
+                    end
                 end
             end
         end
@@ -1852,8 +1905,8 @@ local function BuildHybridRoute(entityRoom, targetRoom, model, reversed)
     return route
 end
 --// LEGACY FollowPlayer MOVEMENT (Type = "NODE" + FollowPlayer = true) //--
--- Kept exactly as it was for backwards compatibility.
--- CHASER does NOT use this; CHASER has its own controller below.
+-- Kept exactly as it was for backwards compatibility. This is how a
+-- chasing entity is made: Type = "NODE" with FollowPlayer = true.
 local function StartHybridMovement(entity, config, spawnTime)
     local model = entity.Model or entity.model
     if not model then return end
@@ -1903,370 +1956,6 @@ local function StartHybridMovement(entity, config, spawnTime)
     end)
 end
 
---==================================================--
--- CHASER MOVEMENT
---
--- "CHASER" is the PUBLIC / CONFIGURATION name.
--- The INTERNAL implementation is a room-aware chase
--- controller that is the ONLY movement authority for
--- the entity (V2's node system is locked out, see the
--- header, BuildV2Config and PatchV2Source).
---
---   different room -> follow RoomEntrance / PathfindNodes /
---                     RoomExit through the loaded rooms
---   same room      -> direct chase toward the player
---   player moved   -> route rebuilt toward the new room
---
--- Room state is NEVER trusted after the fact: both the
--- entity's room and the player's room are re-derived from
--- world position every few frames, so stale room numbers
--- can't keep CHASER on nodes after it has entered the
--- player's room.
---==================================================--
-
-local CHASER_REFRESH_INTERVAL = 0.05    -- how often rooms are re-detected
-local CHASER_REBUILD_COOLDOWN = 0.25    -- min time between rebuilds of an empty/finished route
-local CHASER_ENTER_ROOM_GRACE = 0.3     -- V2 gets this long to fire OnEnterRoom before V3 does
-local CHASER_MAX_ROOM_SPAN = 200        -- sanity limit for route building
-
--- shared despawn helper (name is legacy; it is not NON-NODE specific)
-local DespawnV3Entity = DespawnNonNode
-
--- Player room: geometric position first, CurrentRoom attribute as fallback,
--- last known room if neither is available (respawning, mid-air, etc).
-local function GetChaserPlayerRoom(lastKnownRoom)
-    local root = GetPlayerRoot()
-    if root then
-        local geometric = GetRoomNumber(GetRoomAtPoint(root.Position))
-        if geometric then
-            return geometric
-        end
-    end
-
-    local attribute = tonumber(LocalPlayer:GetAttribute("CurrentRoom"))
-    if attribute then
-        return attribute
-    end
-
-    return lastKnownRoom
-end
-
--- Picks where to join a node list so the entity doesn't run backwards.
--- nearest node, then skip to the next one if we've already passed it.
-local function PickChaserStartIndex(nodes, position)
-    if #nodes <= 1 then
-        return 1
-    end
-
-    local best, bestDistance = 1, math.huge
-    for i, node in ipairs(nodes) do
-        local distance = (node.Position - position).Magnitude
-        if distance < bestDistance then
-            best, bestDistance = i, distance
-        end
-    end
-
-    if best < #nodes then
-        local segment = nodes[best + 1].Position - nodes[best].Position
-        if segment:Dot(position - nodes[best].Position) > 0 then
-            best += 1
-        end
-    end
-
-    return best
-end
-
--- Builds a route of { Node = BasePart, Room = number } entries.
---
---   entityRoom == nil  -> entity isn't over any room floor yet (it spawns
---                         at V2's official spawn position), so it joins the
---                         loaded rooms from the "behind" side: lowest loaded
---                         room, or highest when Movement.Reversed = true.
---
--- Node ORDER always follows the direction of travel (ascending toward a
--- higher player room, descending toward a lower one). Movement.Reversed
--- only affects the spawn side described above.
---
--- The target room only contributes its doorway node: as soon as the entity
--- is really standing inside the player's room, the controller stops using
--- nodes and switches to the direct chase.
-local function BuildChaserRoute(model, entityRoom, targetRoom, reversedSpawn, heightOffset)
-    local roomsFolder = workspace:FindFirstChild("CurrentRooms")
-    local root = GetRoot(model)
-    if not roomsFolder or not root or not targetRoom then
-        return {}
-    end
-
-    local startUnknown = entityRoom == nil
-
-    if startUnknown then
-        local lowest, highest = nil, nil
-        for _, room in ipairs(roomsFolder:GetChildren()) do
-            local number = tonumber(room.Name)
-            if number then
-                lowest = lowest and math.min(lowest, number) or number
-                highest = highest and math.max(highest, number) or number
-            end
-        end
-        if not lowest then
-            return {}
-        end
-        entityRoom = reversedSpawn and highest or lowest
-    elseif entityRoom == targetRoom then
-        return {}
-    end
-
-    if math.abs(targetRoom - entityRoom) > CHASER_MAX_ROOM_SPAN then
-        return {}
-    end
-
-    local step = targetRoom >= entityRoom and 1 or -1
-    local travelReversed = step < 0
-    local flatPosition = root.Position - Vector3.new(0, 3 + (tonumber(heightOffset) or 0), 0)
-
-    local route = {}
-    local room = entityRoom
-
-    while true do
-        local roomModel = roomsFolder:FindFirstChild(tostring(room))
-
-        if roomModel then
-            local nodes = GetRoomNodes(roomModel, travelReversed, 0)
-            local first, last = 1, #nodes
-
-            if room == targetRoom then
-                last = math.min(1, #nodes)
-            elseif room == entityRoom and not startUnknown then
-                first = PickChaserStartIndex(nodes, flatPosition)
-            end
-
-            for i = first, last do
-                route[#route + 1] = { Node = nodes[i], Room = room }
-            end
-        end
-
-        if room == targetRoom then
-            break
-        end
-
-        room += step
-    end
-
-    return route
-end
-
--- Mirrors V2's own room-entry bookkeeping so OnEnterRoom fires exactly once
--- per room. The shared LastEnteredRoom attribute is the gate, so V2's own
--- room detection and this fallback can never double-fire.
-local function NotifyChaserRoomEntered(entity, model, room)
-    local roomNumber = GetRoomNumber(room)
-    if not roomNumber or roomNumber < 0 then
-        return
-    end
-
-    if model:GetAttribute("LastEnteredRoom") == roomNumber then
-        return
-    end
-
-    model:SetAttribute("LastEnteredRoom", roomNumber)
-
-    local roomsEntered = model:FindFirstChild("RoomsEntered")
-    if not roomsEntered then
-        return
-    end
-
-    local firstTime = roomsEntered:GetAttribute(room.Name) == nil
-
-    task.spawn(function()
-        pcall(function()
-            entity:RunCallback("OnEnterRoom", room, firstTime)
-        end)
-    end)
-
-    if firstTime then
-        roomsEntered:SetAttribute(room.Name, true)
-    end
-end
-
-local function StartChaserMovement(entity, config, spawnTime)
-    local model = entity.Model or entity.model
-    if not model then
-        return
-    end
-
-    local movement = config.Movement or {}
-
-    -- Second V2 lockout (the first is FollowPlayer = true in BuildV2Config,
-    -- the third is the PatchV2Source attribute check). Also set in
-    -- Brain.Spawn BEFORE entity:Run(); repeated here so the controller is
-    -- self-contained.
-    pcall(function()
-        model:SetAttribute("V3ChaserMovement", true)
-    end)
-
-    -- FollowPlayer / Target only identify WHO is chased. CHASER always
-    -- chases the player and owns the movement itself.
-    local targetMode = NormalizeType(movement.Target, "PLAYER")
-    if targetMode ~= "PLAYER" then
-        warn("V3 Chaser: unsupported Target '" .. tostring(movement.Target) .. "', chasing the PLAYER instead.")
-    end
-
-    -- Speed is used raw (studs/second) for BOTH node travel and the direct
-    -- chase. It is not passed through V2's 0.65 speed scaling because V2 is
-    -- not moving this entity.
-    local speed = math.max(0, tonumber(movement.Speed) or 19)
-    local delay = math.max(0, tonumber(movement.Delay) or 0)
-    local despawnTime = tonumber(movement.FollowPlayerDespawnTime) or 0
-    local reversed = movement.Reversed == true
-    local heightOffset = tonumber(config.HeightOffset) or 0
-
-    -- entity:Run() blocks for V2's Movement.Delay before returning, so this
-    -- is normally already 0; it also covers builds where Run doesn't yield.
-    local moveStart = os.clock() + math.max(0, delay - (os.clock() - spawnTime))
-
-    local entityRoom = nil        -- room the entity is actually in (geometric)
-    local playerRoom = nil        -- room the player is actually in
-    local nodeRoomHint = nil      -- room of the last reached node (fallback only)
-
-    local route, routeIndex, routeTargetRoom = {}, 1, nil
-    local lastRefresh, lastRebuild = 0, 0
-    local pendingRoomNumber, pendingSince = nil, 0
-    local connection
-
-    local function DirectChase(playerRoot, dt)
-        MoveDirect(
-            model,
-            playerRoot.Position + Vector3.new(0, heightOffset, 0),
-            speed,
-            dt
-        )
-    end
-
-    connection = RunService.Heartbeat:Connect(function(dt)
-        if not entity:IsAlive() or not model.Parent then
-            connection:Disconnect()
-            return
-        end
-
-        local now = os.clock()
-
-        -- despawn timer keeps counting while paused, same as legacy movement
-        if despawnTime > 0 and now - spawnTime >= despawnTime then
-            connection:Disconnect()
-            DespawnV3Entity(entity, model)
-            return
-        end
-
-        if now < moveStart then
-            return
-        end
-
-        if model:GetAttribute("Paused")
-            or model:GetAttribute("BeingBanished")
-            or model:GetAttribute("Despawning")
-        then
-            return
-        end
-
-        local root = GetRoot(model)
-        local playerRoot = GetPlayerRoot()
-        if not root or not playerRoot then
-            return
-        end
-
-        --// ROOM REFRESH (world position, never just stored state) //--
-        if now - lastRefresh >= CHASER_REFRESH_INTERVAL then
-            lastRefresh = now
-
-            local entityRoomModel = GetRoomAtPoint(root.Position)
-            local geometricEntityRoom = GetRoomNumber(entityRoomModel)
-
-            entityRoom = geometricEntityRoom or nodeRoomHint or entityRoom
-            playerRoom = GetChaserPlayerRoom(playerRoom)
-
-            -- OnEnterRoom fallback: V2 normally fires it itself because its
-            -- room detection watches the model position. If it hasn't after a
-            -- short grace period, V3 fires it (same LastEnteredRoom gate).
-            if entityRoomModel
-                and geometricEntityRoom
-                and geometricEntityRoom ~= model:GetAttribute("LastEnteredRoom")
-            then
-                if pendingRoomNumber ~= geometricEntityRoom then
-                    pendingRoomNumber = geometricEntityRoom
-                    pendingSince = now
-                elseif now - pendingSince >= CHASER_ENTER_ROOM_GRACE then
-                    pendingRoomNumber = nil
-                    NotifyChaserRoomEntered(entity, model, entityRoomModel)
-                end
-            else
-                pendingRoomNumber = nil
-            end
-
-            model:SetAttribute("V3ChaserEntityRoom", entityRoom)
-            model:SetAttribute("V3ChaserPlayerRoom", playerRoom)
-        end
-
-        --// player room unknown: nothing to route toward, chase directly //--
-        if playerRoom == nil then
-            DirectChase(playerRoot, dt)
-            return
-        end
-
-        --// SAME ROOM: stop following nodes, chase the player //--
-        if entityRoom ~= nil and entityRoom == playerRoom then
-            if #route > 0 or routeTargetRoom ~= nil then
-                route, routeIndex, routeTargetRoom = {}, 1, nil
-            end
-            DirectChase(playerRoot, dt)
-            return
-        end
-
-        --// DIFFERENT ROOM: (re)build the route if needed //--
-        local playerRoomChanged = routeTargetRoom ~= playerRoom
-        local routeFinished = routeIndex > #route
-
-        if playerRoomChanged
-            or (routeFinished and now - lastRebuild >= CHASER_REBUILD_COOLDOWN)
-        then
-            route = BuildChaserRoute(model, entityRoom, playerRoom, reversed, heightOffset)
-            routeIndex = 1
-            routeTargetRoom = playerRoom
-            lastRebuild = now
-        end
-
-        --// FOLLOW NODES //--
-        local data = route[routeIndex]
-
-        if data and data.Node then
-            local reached = MoveDirect(
-                model,
-                data.Node.Position + Vector3.new(0, 3 + heightOffset, 0),
-                speed,
-                dt
-            )
-
-            if reached then
-                pcall(function()
-                    entity:RunCallback("OnReachedNode", data.Node)
-                end)
-
-                nodeRoomHint = data.Room
-                routeIndex += 1
-
-                -- re-detect rooms on the very next frame so entering the
-                -- player's room switches to the direct chase immediately
-                lastRefresh = 0
-            end
-        else
-            -- no usable route (rooms missing / nothing to walk): fall back to
-            -- a direct chase instead of freezing in place
-            DirectChase(playerRoot, dt)
-        end
-    end)
-
-    entity.__V3ChaserConnection = connection
-end
-
 local function PlayBanishSound(model, config)
     local soundConfig = config.BanishmentSound or {}
     local id = soundConfig.Id or "rbxassetid://139310882854462"
@@ -2287,14 +1976,10 @@ local function StartV3Mechanics(entity, config, spawnTime)
     local movementType = NormalizeType(config.Movement and config.Movement.Type, "NODE")
 
     -- ONE movement authority per type:
-    --   CHASER   -> V3 room-aware chase controller (V2 locked out)
     --   NON-NODE -> V3 non-node controller (V2 nodes skipped)
-    --   NODE     -> V2 nodes (legacy FollowPlayer = true still uses the
-    --               old V3 hybrid controller)
-    -- CHASER is checked FIRST so it can never fall into the hybrid branch.
-    if movementType == "CHASER" then
-        StartChaserMovement(entity, config, spawnTime)
-    elseif movementType == "NON-NODE" then
+    --   NODE     -> V2 nodes (legacy FollowPlayer = true uses the V3
+    --               hybrid controller for chasing behavior)
+    if movementType == "NON-NODE" then
         pcall(function() model:SetAttribute("V3NonNodeMovement", true) end)
         StartNonNodeMovement(entity, config)
     elseif config.Movement and config.Movement.FollowPlayer == true then
@@ -2345,12 +2030,6 @@ function Brain.Spawn(config)
     model = entity.Model
         or entity.model
         or model
-
-    -- CHASER lock: mark the model BEFORE V2 runs so the patched V2 node
-    -- system sees the attribute and never moves this entity.
-    if NormalizeType(config.Movement and config.Movement.Type, "NODE") == "CHASER" then
-        model:SetAttribute("V3ChaserMovement", true)
-    end
 
     local runOk, runError = pcall(function()
         entity:Run()
