@@ -25,7 +25,7 @@ local DEFAULTS = {
     ScaleWalkWithSpeed = false,    -- walk animation speeds up/slows down with your real speed
 
     -- billboard
-    sizeX = 3.2,
+    sizeX = 7,
     sizeY = 7,
     studsOffsetY = 0.25,
     Tint = Color3.new(1, 1, 1),
@@ -39,15 +39,15 @@ local DEFAULTS = {
 
     -- effects
     FrameJiggle = false,
-    FrameJiggleStrength = 0.12,    -- how much it squashes (0.12 = down to 88% height)
-    FrameJiggleEase = 2,           -- 1 = even squash across the frame, higher = snaps right before the change
+    FrameJiggleStrength = 0.03,    -- how much it squashes (0.12 = down to 88% height)
+    FrameJiggleEase = 1.5,           -- 1 = even squash across the frame, higher = snaps right before the change
 
     GlitchEffect = false,
     GlitchStrength = 0.4,
     GlitchRate = 20,
 
     RainbowKeyframeColor = false,
-    RainbowSpeed = 3,
+    RainbowSpeed = 10,
 
     AfterimageEffect = false,
     AfterimageWalkRate = 0.06,
@@ -545,6 +545,7 @@ function Brain.Run(userCfg)
         s.SoundId = resolved[themeSrc]
         s.Volume = theme.Volume or 1
         s.Looped = true -- always loops until you reset/respawn
+        s.PlaybackSpeed = theme.PlaybackSpeed or 1
         if theme.RollOffMaxDistance then s.RollOffMaxDistance = theme.RollOffMaxDistance end
         s.Parent = root
         sounds[#sounds + 1] = s
