@@ -108,25 +108,43 @@ local function hash(s)
     return ("%08x"):format(h)
 end
 
-local ALLOWED_EXT = {png = true, jpg = true, jpeg = true, webp = true, mp3 = true, ogg = true, wav = true}
+local IMAGE_EXTS = {"png", "jpg"}
+local AUDIO_EXTS = {"mp3", "ogg"}
 
-local function guessExt(url, kind)
-    local clean = url:gsub("[%?#].*$", "")
-    local ext = clean:match("%.(%w+)$")
-    ext = ext and ext:lower()
-    if ext and ALLOWED_EXT[ext] then return ext end
-    return kind == "audio" and "mp3" or "png"
+-- headers that make sites (wikis/cdns) hand over the plain png instead of webp or a block page
+local HEADERS = {
+    ["User-Agent"] = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36",
+    ["Accept"] = "image/png,image/jpeg,audio/mpeg,audio/ogg,*/*;q=0.5",
+}
+
+-- detect the REAL file type from the bytes (links often lie about their extension)
+local function sniff(body)
+    local b1, b2 = body:byte(1, 2)
+    if body:sub(2, 4) == "PNG" then return "png" end
+    if b1 == 0xFF and b2 == 0xD8 then return "jpg" end
+    if body:sub(1, 3) == "GIF" then return "gif" end
+    if body:sub(1, 4) == "RIFF" then
+        local kind = body:sub(9, 12)
+        if kind == "WEBP" then return "webp" end
+        if kind == "WAVE" then return "wav" end
+    end
+    if body:sub(1, 4) == "OggS" then return "ogg" end
+    if body:sub(1, 3) == "ID3" or (b1 == 0xFF and b2 and b2 >= 0xE0) then return "mp3" end
+    return nil
 end
 
-local function looksValid(ext, body)
-    if ext == "png" then return body:sub(2, 4) == "PNG" end
-    if ext == "jpg" or ext == "jpeg" then return body:byte(1) == 0xFF and body:byte(2) == 0xD8 end
-    if ext == "webp" or ext == "wav" then return body:sub(1, 4) == "RIFF" end
-    if ext == "ogg" then return body:sub(1, 4) == "OggS" end
-    if ext == "mp3" then
-        return body:sub(1, 3) == "ID3" or (body:byte(1) == 0xFF and (body:byte(2) or 0) >= 0xE0)
+local function usable(kind, ext)
+    if kind == "audio" then return ext == "mp3" or ext == "ogg" end
+    return ext == "png" or ext == "jpg"
+end
+
+local function findCached(prefix, kind)
+    local list = (kind == "audio") and AUDIO_EXTS or IMAGE_EXTS
+    for _, e in ipairs(list) do
+        local p = prefix .. "." .. e
+        if isfile(p) then return p end
     end
-    return true
+    return nil
 end
 
 -- downloads (or reuses cached) a link, returns a getcustomasset string or nil
@@ -138,24 +156,42 @@ local function fetch(url, kind, cfg)
     if makefolder and isfolder and not isfolder(CACHE_DIR) then pcall(makefolder, CACHE_DIR) end
     local base = (isfolder and isfolder(CACHE_DIR)) and (CACHE_DIR .. "/") or ""
 
-    local ext = guessExt(url, kind)
     local safeName = tostring(cfg.SkinName or "Skin"):gsub("[^%w_%-]", "_")
     -- the url hash is in the filename, so changing a link automatically downloads fresh
-    local path = ("%s%s_%s.%s"):format(base, safeName, hash(url), ext)
+    local prefix = ("%s%s_%s"):format(base, safeName, hash(url))
 
-    if cfg.ForceRedownload or not isfile(path) then
-        local ok, res = pcall(request, {Url = url, Method = "GET"})
-        if ok and res and res.Body and #res.Body > 0
-            and (res.Success or res.StatusCode == 200) and looksValid(ext, res.Body) then
-            pcall(writefile, path, res.Body)
-        else
-            warn(TAG .. "download failed or wasn't a real " .. ext .. " file: " .. url)
+    local path = (not cfg.ForceRedownload) and findCached(prefix, kind) or nil
+    if not path then
+        local ok, res = pcall(request, {Url = url, Method = "GET", Headers = HEADERS})
+        if not ok or type(res) ~= "table" then
+            warn(TAG .. "request error: " .. tostring(res) .. " | " .. url)
             return nil
         end
+        local body = res.Body
+        local status = tostring(res.StatusCode or "?")
+        if not body or #body == 0 then
+            warn(("%sdownload failed (HTTP %s, empty body): %s"):format(TAG, status, url))
+            return nil
+        end
+        local ext = sniff(body)
+        if not ext then
+            local preview = (body:sub(1, 40):gsub("%c+", " "))
+            warn(("%sdownload failed (HTTP %s, %d bytes, not an image/audio file, starts with %q): %s")
+                :format(TAG, status, #body, preview, url))
+            return nil
+        end
+        if not usable(kind, ext) then
+            warn(("%sthat link served a %s file, roblox can't use %s here. use a png/jpg (or mp3/ogg): %s")
+                :format(TAG, ext:upper(), ext:upper(), url))
+            return nil
+        end
+        path = prefix .. "." .. ext
+        pcall(writefile, path, body)
     end
 
     local ok, asset = pcall(customAsset, path)
     if ok and asset then return asset end
+    warn(TAG .. "getcustomasset failed for " .. path)
     return nil
 end
 
