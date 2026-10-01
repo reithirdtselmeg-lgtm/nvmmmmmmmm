@@ -1,4 +1,4 @@
--- SkinBrain v1.1
+-- SkinBrain v1.2
 -- the boring work: downloads/caching, frame logic, billboard, effects, cleanup.
 -- you never need to edit this. all settings live in SkinTemplate.lua.
 -- host it (github raw link) or put it in your executor's workspace as "SkinBrain.lua".
@@ -10,7 +10,7 @@ local ContentProvider = game:GetService("ContentProvider")
 
 local env = (getgenv and getgenv()) or _G
 local TAG = "[SkinBrain] "
-local Brain = {Version = "1.1"}
+local Brain = {Version = "1.2"}
 
 -- --- DEFAULTS ---
 local DEFAULTS = {
@@ -61,6 +61,7 @@ local DEFAULTS = {
     ForceRedownload = false,
     DownloadTimeout = 20,
     DownloadRetries = 2,
+    AllowUnsupportedFormats = true, -- try webp/gif anyway if a link only gives those (roblox may not draw them)
     Debug = true,                  -- false = only print problems
 }
 -- settings that are allowed to be nil (so they aren't flagged as typos)
@@ -129,7 +130,7 @@ local function hash(s)
     return ("%08x"):format(h)
 end
 
-local IMAGE_EXTS = {"png", "jpg"}
+local IMAGE_EXTS = {"png", "jpg", "webp", "gif"}
 local AUDIO_EXTS = {"mp3", "ogg"}
 
 -- headers that make sites (wikis/cdns) hand over the plain png instead of webp or a block page
@@ -154,9 +155,24 @@ local function sniff(body)
     return nil
 end
 
-local function usable(kind, ext)
+-- formats roblox definitely supports
+local function good(kind, ext)
     if kind == "audio" then return ext == "mp3" or ext == "ogg" end
     return ext == "png" or ext == "jpg"
+end
+
+-- formats we'll still try if nothing better is available
+local function tolerated(kind, ext, cfg)
+    return kind == "image" and cfg.AllowUnsupportedFormats and (ext == "webp" or ext == "gif")
+end
+
+-- fandom/wikia cdn serves webp by default; this flag asks it for the original png instead
+local function wikiOriginal(url)
+    if not (url:find("static.wikia.nocookie.net", 1, true) or url:find("vignette.wikia.nocookie.net", 1, true)) then
+        return nil
+    end
+    if url:find("format=original", 1, true) then return nil end
+    return url .. (url:find("?", 1, true) and "&" or "?") .. "format=original"
 end
 
 local function findCached(prefix, kind)
@@ -169,7 +185,7 @@ local function findCached(prefix, kind)
 end
 
 -- one download with retries. returns body, ext  (or nil, reason)
-local function download(url, kind, cfg)
+local function download(url, kind, cfg, isAlt)
     local attempts = math.max(math.floor(cfg.DownloadRetries), 0) + 1
     local reason = "unknown error"
     for attempt = 1, attempts do
@@ -179,8 +195,18 @@ local function download(url, kind, cfg)
             local status = tostring(res.StatusCode or "?")
             if body and #body > 0 then
                 local ext = sniff(body)
-                if ext and usable(kind, ext) then return body, ext end
+                if ext and good(kind, ext) then return body, ext end
                 if ext then
+                    -- wrong format. for wiki links, ask the cdn for the original png first
+                    if not isAlt then
+                        local alt = wikiOriginal(url)
+                        if alt then
+                            local b2, e2 = download(alt, kind, cfg, true)
+                            if b2 and good(kind, e2) then return b2, e2 end
+                        end
+                    end
+                    -- still not a supported format: use it anyway if allowed
+                    if tolerated(kind, ext, cfg) then return body, ext end
                     -- permanent problem, retrying won't help
                     return nil, ("link served a %s file, roblox can't use that here. use png/jpg (or mp3/ogg)")
                         :format(ext:upper())
@@ -235,6 +261,10 @@ local function fetch(url, kind, cfg)
     if not body then
         warn(("%sdownload failed (%s): %s"):format(TAG, tostring(extOrReason), url))
         return nil
+    end
+    if extOrReason == "webp" or extOrReason == "gif" then
+        warn(("%sthis link only gives a %s file. roblox may not draw it (blank sprite). if it's blank, re-host it as png/jpg: %s")
+            :format(TAG, extOrReason:upper(), url))
     end
     local path = prefix .. "." .. extOrReason
     pcall(writefile, path, body)
