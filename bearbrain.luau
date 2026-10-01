@@ -1,7 +1,7 @@
--- SkinBrain v1.0
+-- SkinBrain v1.1
 -- the boring work: downloads/caching, frame logic, billboard, effects, cleanup.
 -- you never need to edit this. all settings live in SkinTemplate.lua.
--- put this file in your executor's workspace folder as "SkinBrain.lua".
+-- host it (github raw link) or put it in your executor's workspace as "SkinBrain.lua".
 
 local Players         = game:GetService("Players")
 local RunService      = game:GetService("RunService")
@@ -10,7 +10,7 @@ local ContentProvider = game:GetService("ContentProvider")
 
 local env = (getgenv and getgenv()) or _G
 local TAG = "[SkinBrain] "
-local Brain = {Version = "1.0"}
+local Brain = {Version = "1.1"}
 
 -- --- DEFAULTS ---
 local DEFAULTS = {
@@ -22,6 +22,7 @@ local DEFAULTS = {
     IdleFrameSwitchSpeed = 0.25,   -- seconds per idle frame
     IdleFrameCycle = false,
     WalkFrameCycle = false,
+    ScaleWalkWithSpeed = false,    -- walk animation speeds up/slows down with your real speed
 
     -- billboard
     sizeX = 3.2,
@@ -31,7 +32,9 @@ local DEFAULTS = {
     Transparency = 0,
     LightInfluence = 1,
     AlwaysOnTop = false,
+    PixelArt = false,              -- crisp pixels instead of smoothed
     HideCharacter = false,
+    HideNameTag = false,
     RemoveOtherBillboards = true,
 
     -- effects
@@ -54,9 +57,11 @@ local DEFAULTS = {
     AfterimageTransparency = 0.4,
     AfterimageDistort = true,
 
-    -- downloads
+    -- downloads / logging
     ForceRedownload = false,
     DownloadTimeout = 20,
+    DownloadRetries = 2,
+    Debug = true,                  -- false = only print problems
 }
 -- settings that are allowed to be nil (so they aren't flagged as typos)
 local OPTIONAL = {WalkFrameSwitchSpeed = true, ThemeSound = true, PointLightModifier = true}
@@ -69,11 +74,27 @@ local function buildConfig(user)
         end
         cfg[k] = v
     end
-    for k, v in pairs(DEFAULTS) do
-        if cfg[k] == nil then cfg[k] = v end
+    for k, def in pairs(DEFAULTS) do
+        local want = typeof(def)
+        if cfg[k] == nil then
+            cfg[k] = def
+        elseif want ~= "table" and typeof(cfg[k]) ~= want then
+            warn(("%s'%s' should be a %s, using the default (%s)"):format(TAG, k, want, tostring(def)))
+            cfg[k] = def
+        end
     end
-    if typeof(cfg.Tint) ~= "Color3" then cfg.Tint = Color3.new(1, 1, 1) end
+    cfg.Transparency = math.clamp(cfg.Transparency, 0, 1)
+    cfg.LightInfluence = math.clamp(cfg.LightInfluence, 0, 1)
+    cfg.AfterimageMax = math.max(math.floor(cfg.AfterimageMax), 0)
+    if cfg.WalkFrameSwitchSpeed ~= nil and type(cfg.WalkFrameSwitchSpeed) ~= "number" then
+        warn(TAG .. "WalkFrameSwitchSpeed should be a number or nil, using the default")
+        cfg.WalkFrameSwitchSpeed = nil
+    end
     return cfg
+end
+
+local function info(cfg, msg)
+    if cfg.Debug then warn(TAG .. msg) end
 end
 
 -- --- EXECUTOR FUNCTIONS ---
@@ -147,6 +168,40 @@ local function findCached(prefix, kind)
     return nil
 end
 
+-- one download with retries. returns body, ext  (or nil, reason)
+local function download(url, kind, cfg)
+    local attempts = math.max(math.floor(cfg.DownloadRetries), 0) + 1
+    local reason = "unknown error"
+    for attempt = 1, attempts do
+        local ok, res = pcall(request, {Url = url, Method = "GET", Headers = HEADERS})
+        if ok and type(res) == "table" then
+            local body = res.Body
+            local status = tostring(res.StatusCode or "?")
+            if body and #body > 0 then
+                local ext = sniff(body)
+                if ext and usable(kind, ext) then return body, ext end
+                if ext then
+                    -- permanent problem, retrying won't help
+                    return nil, ("link served a %s file, roblox can't use that here. use png/jpg (or mp3/ogg)")
+                        :format(ext:upper())
+                end
+                local preview = (body:sub(1, 40):gsub("%c+", " "))
+                reason = ("HTTP %s, %d bytes, not an image/audio file, starts with %q")
+                    :format(status, #body, preview)
+                local code = tonumber(res.StatusCode)
+                -- client errors (403/404...) won't fix themselves, except 429
+                if code and code >= 400 and code < 500 and code ~= 429 then break end
+            else
+                reason = ("HTTP %s, empty body"):format(status)
+            end
+        else
+            reason = "request error: " .. tostring(res)
+        end
+        if attempt < attempts then task.wait(0.4 * attempt) end
+    end
+    return nil, reason
+end
+
 -- downloads (or reuses cached) a link, returns a getcustomasset string or nil
 local function fetch(url, kind, cfg)
     if not (request and writefile and isfile and customAsset) then
@@ -160,39 +215,32 @@ local function fetch(url, kind, cfg)
     -- the url hash is in the filename, so changing a link automatically downloads fresh
     local prefix = ("%s%s_%s"):format(base, safeName, hash(url))
 
-    local path = (not cfg.ForceRedownload) and findCached(prefix, kind) or nil
-    if not path then
-        local ok, res = pcall(request, {Url = url, Method = "GET", Headers = HEADERS})
-        if not ok or type(res) ~= "table" then
-            warn(TAG .. "request error: " .. tostring(res) .. " | " .. url)
-            return nil
-        end
-        local body = res.Body
-        local status = tostring(res.StatusCode or "?")
-        if not body or #body == 0 then
-            warn(("%sdownload failed (HTTP %s, empty body): %s"):format(TAG, status, url))
-            return nil
-        end
-        local ext = sniff(body)
-        if not ext then
-            local preview = (body:sub(1, 40):gsub("%c+", " "))
-            warn(("%sdownload failed (HTTP %s, %d bytes, not an image/audio file, starts with %q): %s")
-                :format(TAG, status, #body, preview, url))
-            return nil
-        end
-        if not usable(kind, ext) then
-            warn(("%sthat link served a %s file, roblox can't use %s here. use a png/jpg (or mp3/ogg): %s")
-                :format(TAG, ext:upper(), ext:upper(), url))
-            return nil
-        end
-        path = prefix .. "." .. ext
-        pcall(writefile, path, body)
+    local function use(path)
+        local ok, asset = pcall(customAsset, path)
+        if ok and asset then return asset end
+        return nil
     end
 
-    local ok, asset = pcall(customAsset, path)
-    if ok and asset then return asset end
-    warn(TAG .. "getcustomasset failed for " .. path)
-    return nil
+    if not cfg.ForceRedownload then
+        local cached = findCached(prefix, kind)
+        if cached then
+            local asset = use(cached)
+            if asset then return asset end
+            -- cached file is corrupt: delete it and download again
+            if delfile then pcall(delfile, cached) end
+        end
+    end
+
+    local body, extOrReason = download(url, kind, cfg)
+    if not body then
+        warn(("%sdownload failed (%s): %s"):format(TAG, tostring(extOrReason), url))
+        return nil
+    end
+    local path = prefix .. "." .. extOrReason
+    pcall(writefile, path, body)
+    local asset = use(path)
+    if not asset then warn(TAG .. "getcustomasset failed for " .. path) end
+    return asset
 end
 
 -- resolves every source in parallel; returns map src -> usable asset string (or false)
@@ -217,6 +265,10 @@ local function resolveAll(entries, cfg)
     end
     local deadline = os.clock() + cfg.DownloadTimeout
     while pending > 0 and os.clock() < deadline do task.wait(0.05) end
+    if pending > 0 then
+        warn(("%sdownloads timed out after %ds (%d unfinished). raise DownloadTimeout"):format(
+            TAG, cfg.DownloadTimeout, pending))
+    end
     return out
 end
 
@@ -246,13 +298,17 @@ local function mulColor(a, b)
     return Color3.new(a.R * b.R, a.G * b.G, a.B * b.B)
 end
 
--- --- RUN ---
-function Brain.Run(userCfg)
-    -- re-execute guard
+-- removes the current skin (if any)
+function Brain.Stop()
     if env.__SkinBrainCleanup then
         pcall(env.__SkinBrainCleanup)
         env.__SkinBrainCleanup = nil
     end
+end
+
+-- --- RUN ---
+function Brain.Run(userCfg)
+    Brain.Stop() -- re-execute guard
 
     local cfg = buildConfig(userCfg)
     local plr = Players.LocalPlayer
@@ -276,7 +332,7 @@ function Brain.Run(userCfg)
     local idleSrc = collect(cfg.Idle, "image")
     local walkSrc = collect(cfg.Walk, "image")
     local theme = cfg.ThemeSound
-    local themeSrc = theme and normalize(theme.Id)
+    local themeSrc = type(theme) == "table" and normalize(theme.Id) or nil
     if themeSrc then entries[#entries + 1] = {src = themeSrc, kind = "audio"} end
 
     local resolved = resolveAll(entries, cfg)
@@ -291,7 +347,8 @@ function Brain.Run(userCfg)
     local idle, walk = frames(idleSrc), frames(walkSrc)
     if #idle == 0 and #walk > 0 then idle = {walk[1]} end
     if #walk == 0 then walk = idle end
-    warn(("%sloaded '%s': %d idle frame(s), %d walk frame(s)"):format(TAG, cfg.SkinName, #idle, #walk))
+    info(cfg, ("loaded '%s': %d/%d idle frame(s), %d/%d walk frame(s)"):format(
+        cfg.SkinName, #frames(idleSrc), #idleSrc, #frames(walkSrc), #walkSrc))
     if #idle == 0 then
         warn(TAG .. "no usable sprites loaded, nothing to show")
         return nil
@@ -325,6 +382,7 @@ function Brain.Run(userCfg)
     sprite.BackgroundTransparency = 1
     sprite.ImageColor3 = cfg.Tint
     sprite.ImageTransparency = cfg.Transparency
+    if cfg.PixelArt then sprite.ResampleMode = Enum.ResamplerMode.Pixelated end
     sprite.ZIndex = 2
     sprite.Image = idle[1]
     sprite.Parent = gui
@@ -358,6 +416,12 @@ function Brain.Run(userCfg)
         while not finished and os.clock() - t0 < 2 do task.wait(0.05) end
     end
 
+    -- player might have reset while we were loading
+    if not char:IsDescendantOf(game) or humanoid.Health <= 0 then
+        gui:Destroy()
+        return nil
+    end
+
     -- afterimage holder + pool
     local trailHolder
     local trailPool, activeTrails = {}, 0
@@ -368,7 +432,6 @@ function Brain.Run(userCfg)
     end
 
     local currentColor = cfg.Tint
-    local state = {moving = false}
 
     local function acquireTrail()
         local t = table.remove(trailPool)
@@ -387,6 +450,7 @@ function Brain.Run(userCfg)
         local img = Instance.new("ImageLabel")
         img.Size = UDim2.new(1, 0, 1, 0)
         img.BackgroundTransparency = 1
+        if cfg.PixelArt then img.ResampleMode = Enum.ResamplerMode.Pixelated end
         img.ZIndex = 0
         img.Parent = tgui
         return {part = part, gui = tgui, img = img}
@@ -437,6 +501,13 @@ function Brain.Run(userCfg)
         conns[#conns + 1] = char.DescendantAdded:Connect(track)
     end
 
+    -- hide the overhead name/health bar (optional)
+    local oldDisplayType
+    if cfg.HideNameTag then
+        oldDisplayType = humanoid.DisplayDistanceType
+        humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+    end
+
     -- theme sound (optional)
     if themeSrc and resolved[themeSrc] then
         local s = Instance.new("Sound")
@@ -460,7 +531,7 @@ function Brain.Run(userCfg)
     end
 
     -- PointLight modifier (optional, finds a PointLight inside your character)
-    local pl = cfg.PointLightModifier
+    local pl = type(cfg.PointLightModifier) == "table" and cfg.PointLightModifier or nil
     local lightRef, lightOriginal
     if pl and pl.Enabled then
         task.spawn(function()
@@ -494,13 +565,18 @@ function Brain.Run(userCfg)
     local glitch = {x = 0, y = 0, z = 0, rot = 0, scale = 1}
     local nextGlitch, lastTrail = 0, 0
 
-    conns[#conns + 1] = RunService.RenderStepped:Connect(function(dt)
+    local function step(dt)
         local now = os.clock()
         local moving = humanoid.MoveDirection.Magnitude > 0
-        state.moving = moving
 
         if moving then
-            walkTime += dt
+            local mul = 1
+            if cfg.ScaleWalkWithSpeed then
+                local v = root.AssemblyLinearVelocity
+                local flat = Vector3.new(v.X, 0, v.Z).Magnitude
+                mul = math.clamp(flat / 16, 0.4, 3)
+            end
+            walkTime += dt * mul
             idleTime = 0
         else
             idleTime += dt
@@ -530,9 +606,9 @@ function Brain.Run(userCfg)
         -- stretch back to normal right before the next, looping. walking only.
         if cfg.FrameJiggle then
             if moving then
-                local step = walkTime / math.max(walkSpeed, 0.01)
-                local whole = math.floor(step)
-                local e = (step - whole) ^ math.max(cfg.FrameJiggleEase, 0.1)
+                local stepF = walkTime / math.max(walkSpeed, 0.01)
+                local whole = math.floor(stepF)
+                local e = (stepF - whole) ^ math.max(cfg.FrameJiggleEase, 0.1)
                 local amt = cfg.FrameJiggleStrength
                 if whole % 2 == 0 then
                     squashY = 1 - amt * e          -- normal -> squashed
@@ -579,6 +655,16 @@ function Brain.Run(userCfg)
         for i = 1, #hiddenParts do
             hiddenParts[i].LocalTransparencyModifier = 1
         end
+    end
+
+    -- errors are caught so one bad frame can't spam the console or kill the skin
+    local errored = false
+    conns[#conns + 1] = RunService.RenderStepped:Connect(function(dt)
+        local ok, err = pcall(step, dt)
+        if not ok and not errored then
+            errored = true
+            warn(TAG .. "render error (send this to the dev): " .. tostring(err))
+        end
     end)
 
     -- cleanup (gone for good on reset/respawn, never comes back)
@@ -589,6 +675,9 @@ function Brain.Run(userCfg)
         for _, s in ipairs(sounds) do s:Destroy() end
         for i = 1, #hiddenParts do
             pcall(function() hiddenParts[i].LocalTransparencyModifier = 0 end)
+        end
+        if oldDisplayType then
+            pcall(function() humanoid.DisplayDistanceType = oldDisplayType end)
         end
         if lightRef and lightOriginal and lightRef.Parent then
             pcall(function()
