@@ -1,4 +1,4 @@
--- SkinBrain v1.2
+-- SkinBrain v1.4
 -- the boring work: downloads/caching, frame logic, billboard, effects, cleanup.
 -- you never need to edit this. all settings live in SkinTemplate.lua.
 -- host it (github raw link) or put it in your executor's workspace as "SkinBrain.lua".
@@ -10,7 +10,7 @@ local ContentProvider = game:GetService("ContentProvider")
 
 local env = (getgenv and getgenv()) or _G
 local TAG = "[SkinBrain] "
-local Brain = {Version = "1.2"}
+local Brain = {Version = "1.4"}
 
 -- --- DEFAULTS ---
 local DEFAULTS = {
@@ -62,6 +62,10 @@ local DEFAULTS = {
     DownloadTimeout = 20,
     DownloadRetries = 2,
     AllowUnsupportedFormats = true, -- try webp/gif anyway if a link only gives those (roblox may not draw them)
+    ConvertGifs = true,            -- gif links are split into png frames automatically (roblox can't play gifs)
+    GifMaxFrames = 60,             -- gifs longer than this are cut off
+    GifMaxSize = 400,              -- gifs wider/taller than this (pixels) are refused, shrink them first
+    DeleteDownloadsOnRemove = false, -- true = delete the downloaded files when the skin is removed (reset/respawn)
     Debug = true,                  -- false = only print problems
 }
 -- settings that are allowed to be nil (so they aren't flagged as typos)
@@ -156,8 +160,9 @@ local function sniff(body)
 end
 
 -- formats roblox definitely supports
-local function good(kind, ext)
+local function good(kind, ext, cfg)
     if kind == "audio" then return ext == "mp3" or ext == "ogg" end
+    if ext == "gif" and cfg and cfg.ConvertGifs then return true end -- we split gifs into png frames
     return ext == "png" or ext == "jpg"
 end
 
@@ -173,6 +178,351 @@ local function wikiOriginal(url)
     end
     if url:find("format=original", 1, true) then return nil end
     return url .. (url:find("?", 1, true) and "&" or "?") .. "format=original"
+end
+
+-- --- GIF DECODER ---
+-- roblox can't play gifs, so a gif is decoded into separate png frames
+-- (the brain then animates them like any other frame list)
+local band, bor, bxor, lshift, rshift = bit32.band, bit32.bor, bit32.bxor, bit32.lshift, bit32.rshift
+local unpack = table.unpack or unpack
+
+local function rd16(s, p)
+    local a, b = s:byte(p, p + 1)
+    return (a or 0) + (b or 0) * 256
+end
+
+local CRC_TABLE
+local function crcTable()
+    if CRC_TABLE then return CRC_TABLE end
+    CRC_TABLE = {}
+    for i = 0, 255 do
+        local c = i
+        for _ = 1, 8 do
+            if band(c, 1) == 1 then c = bxor(0xEDB88320, rshift(c, 1)) else c = rshift(c, 1) end
+        end
+        CRC_TABLE[i] = c
+    end
+    return CRC_TABLE
+end
+
+local function u32(n)
+    return string.char(band(rshift(n, 24), 255), band(rshift(n, 16), 255), band(rshift(n, 8), 255), band(n, 255))
+end
+
+-- canvas = flat array of bytes, laid out exactly like raw png scanlines (filter byte 0, then RGBA per pixel)
+local function encodePNG(w, h, canvas)
+    local T = crcTable()
+    local total = #canvas
+
+    local ihdr = u32(w) .. u32(h) .. "\8\6\0\0\0"
+    local crcI = 0xFFFFFFFF
+    local ihdrFull = "IHDR" .. ihdr
+    for i = 1, #ihdrFull do
+        crcI = bxor(T[band(bxor(crcI, ihdrFull:byte(i)), 255)], rshift(crcI, 8))
+    end
+    crcI = bxor(crcI, 0xFFFFFFFF)
+
+    local idat, idatLen = {}, 0
+    local crc = 0xFFFFFFFF
+    local function feedStr(str)
+        for i = 1, #str do
+            crc = bxor(T[band(bxor(crc, str:byte(i)), 255)], rshift(crc, 8))
+        end
+    end
+    local function push(str)
+        idat[#idat + 1] = str
+        idatLen += #str
+    end
+
+    feedStr("IDAT")
+    local zh = "\120\1" -- zlib header, no compression
+    feedStr(zh)
+    push(zh)
+
+    local a, b = 1, 0
+    local pos = 1
+    while pos <= total do
+        local n = math.min(65535, total - pos + 1)
+        local last = pos + n - 1
+        local final = (last >= total) and 1 or 0
+        local nlen = bxor(n, 0xFFFF)
+        local bh = string.char(final, band(n, 255), rshift(n, 8), band(nlen, 255), rshift(nlen, 8))
+        feedStr(bh)
+        push(bh)
+        local i = pos
+        while i <= last do
+            local j = math.min(i + 3999, last)
+            for k = i, j do
+                local v = canvas[k]
+                crc = bxor(T[band(bxor(crc, v), 255)], rshift(crc, 8))
+                a += v
+                b += a
+            end
+            push(string.char(unpack(canvas, i, j)))
+            i = j + 1
+        end
+        a %= 65521
+        b %= 65521
+        pos += n
+    end
+
+    local adler = u32(b * 65536 + a)
+    feedStr(adler)
+    push(adler)
+    crc = bxor(crc, 0xFFFFFFFF)
+
+    return table.concat({
+        "\137PNG\r\n\26\n",
+        u32(13), "IHDR", ihdr, u32(crcI),
+        u32(idatLen), "IDAT", table.concat(idat), u32(crc),
+        "\0\0\0\0IEND\174\66\96\130",
+    })
+end
+
+local function readPalette(data, pos, bits)
+    local size = lshift(1, bits + 1)
+    local pal = {}
+    for i = 0, size - 1 do
+        local r, g, b = data:byte(pos + i * 3, pos + i * 3 + 2)
+        pal[i] = {r or 0, g or 0, b or 0}
+    end
+    return pal, pos + size * 3
+end
+
+-- returns an array of palette indexes (1-based) and how many were decoded
+local function lzwDecode(data, minCode, pixelCount)
+    if minCode < 2 or minCode > 8 then return nil, "bad lzw code size" end
+    local out = table.create(pixelCount, 0)
+    local outN = 0
+    local clear = lshift(1, minCode)
+    local eoi = clear + 1
+    local codeSize = minCode + 1
+    local nextCode = eoi + 1
+    local prefix, suffix, stack = {}, {}, {}
+    local prev
+    local bitBuf, bitCount, pos, len = 0, 0, 1, #data
+
+    while outN < pixelCount do
+        while bitCount < codeSize do
+            if pos > len then return out, outN end
+            bitBuf = bor(bitBuf, lshift(data:byte(pos), bitCount))
+            bitCount += 8
+            pos += 1
+        end
+        local code = band(bitBuf, lshift(1, codeSize) - 1)
+        bitBuf = rshift(bitBuf, codeSize)
+        bitCount -= codeSize
+
+        if code == clear then
+            codeSize = minCode + 1
+            nextCode = eoi + 1
+            prev = nil
+        elseif code == eoi then
+            break
+        elseif prev == nil then
+            if code >= clear then return nil, "corrupt gif data" end
+            outN += 1
+            out[outN] = code
+            prev = code
+        else
+            if code > nextCode then return nil, "corrupt gif data" end
+            local isK = (code == nextCode)
+            local cur = isK and prev or code
+            local n = 0
+            while cur >= clear do
+                n += 1
+                stack[n] = suffix[cur]
+                cur = prefix[cur]
+            end
+            local root = cur
+            outN += 1
+            out[outN] = root
+            for i = n, 1, -1 do
+                outN += 1
+                out[outN] = stack[i]
+            end
+            if isK then
+                outN += 1
+                out[outN] = root
+            end
+            if nextCode < 4096 then
+                prefix[nextCode] = prev
+                suffix[nextCode] = root
+                nextCode += 1
+                if nextCode == lshift(1, codeSize) and codeSize < 12 then codeSize += 1 end
+            end
+            prev = code
+        end
+    end
+    return out, outN
+end
+
+local function interlaceOrder(h)
+    local order = {}
+    for _, pass in ipairs({{0, 8}, {4, 8}, {2, 4}, {1, 2}}) do
+        for r = pass[1], h - 1, pass[2] do order[#order + 1] = r end
+    end
+    return order
+end
+
+-- returns {{png = "<bytes>", delay = seconds}, ...} or nil, reason
+local function decodeGif(data, cfg)
+    if data:sub(1, 3) ~= "GIF" then return nil, "not a gif file" end
+    local w, h = rd16(data, 7), rd16(data, 9)
+    if w == 0 or h == 0 then return nil, "empty gif" end
+    if w > cfg.GifMaxSize or h > cfg.GifMaxSize then
+        return nil, ("gif is %dx%d, bigger than GifMaxSize (%d). shrink it first (ezgif.com/resize)")
+            :format(w, h, cfg.GifMaxSize)
+    end
+
+    local flags = data:byte(11)
+    local pos = 14
+    local gct
+    if band(flags, 0x80) ~= 0 then
+        gct, pos = readPalette(data, pos, band(flags, 7))
+    end
+
+    local stride = 1 + w * 4
+    local canvas = table.create(h * stride, 0)
+    local frames = {}
+    local gce
+    local len = #data
+
+    while pos <= len do
+        local block = data:byte(pos)
+        if block == 0x3B then
+            break
+        elseif block == 0x21 then
+            if data:byte(pos + 1) == 0xF9 then
+                local pk = data:byte(pos + 3)
+                gce = {
+                    disposal = band(rshift(pk, 2), 7),
+                    transparent = (band(pk, 1) == 1) and data:byte(pos + 6) or nil,
+                    delay = rd16(data, pos + 4) / 100,
+                }
+            end
+            pos += 2
+            while true do
+                local n = data:byte(pos)
+                if not n then break end
+                pos += 1 + n
+                if n == 0 then break end
+            end
+        elseif block == 0x2C then
+            local ix, iy = rd16(data, pos + 1), rd16(data, pos + 3)
+            local iw, ih = rd16(data, pos + 5), rd16(data, pos + 7)
+            local ipk = data:byte(pos + 9)
+            pos += 10
+            local palette = gct
+            if band(ipk, 0x80) ~= 0 then
+                palette, pos = readPalette(data, pos, band(ipk, 7))
+            end
+            local interlaced = band(ipk, 0x40) ~= 0
+            local minCode = data:byte(pos)
+            pos += 1
+            local chunks = {}
+            while true do
+                local n = data:byte(pos)
+                pos += 1
+                if not n or n == 0 then break end
+                chunks[#chunks + 1] = data:sub(pos, pos + n - 1)
+                pos += n
+            end
+
+            local idx, why = lzwDecode(table.concat(chunks), minCode or 0, iw * ih)
+            if not idx then return nil, why end
+
+            local g = gce or {disposal = 0, delay = 0.1}
+            gce = nil
+            local saved
+            if g.disposal == 3 then saved = table.clone(canvas) end
+            local transparent = g.transparent
+            local order = interlaced and interlaceOrder(ih) or nil
+
+            for row = 0, ih - 1 do
+                local y = iy + (order and order[row + 1] or row)
+                if y < h then
+                    for col = 0, iw - 1 do
+                        local x = ix + col
+                        if x < w then
+                            local c = idx[row * iw + col + 1]
+                            if c ~= transparent then
+                                local color = palette and palette[c]
+                                if color then
+                                    local p = y * stride + 2 + x * 4
+                                    canvas[p] = color[1]
+                                    canvas[p + 1] = color[2]
+                                    canvas[p + 2] = color[3]
+                                    canvas[p + 3] = 255
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+
+            local delay = g.delay
+            if delay < 0.02 then delay = 0.1 end -- browsers treat tiny delays as 0.1s
+            frames[#frames + 1] = {png = encodePNG(w, h, canvas), delay = delay}
+
+            -- prepare the canvas for the next frame
+            if g.disposal == 2 then
+                for y = iy, math.min(iy + ih - 1, h - 1) do
+                    for x = ix, math.min(ix + iw - 1, w - 1) do
+                        local p = y * stride + 2 + x * 4
+                        canvas[p], canvas[p + 1], canvas[p + 2], canvas[p + 3] = 0, 0, 0, 0
+                    end
+                end
+            elseif g.disposal == 3 and saved then
+                canvas = saved
+            end
+
+            task.wait() -- keep the game responsive while decoding
+            if #frames >= cfg.GifMaxFrames then
+                warn(("%sgif has more than %d frames, the rest were cut off (raise GifMaxFrames)")
+                    :format(TAG, cfg.GifMaxFrames))
+                break
+            end
+        else
+            pos += 1 -- unknown byte, skip
+        end
+    end
+
+    if #frames == 0 then return nil, "gif had no frames" end
+    return frames
+end
+
+-- decodes a gif, saves each frame as a png, returns asset array + file paths
+local function convertGif(body, prefix, cfg, use)
+    local ok, frames, err = pcall(decodeGif, body, cfg)
+    if not ok then
+        err = frames
+        frames = nil
+    end
+    if not frames then
+        warn(TAG .. "couldn't turn that gif into frames: " .. tostring(err))
+        return nil
+    end
+    local assets, paths, totalDelay = {}, {}, 0
+    for i, f in ipairs(frames) do
+        local p = ("%s_g%03d.png"):format(prefix, i)
+        pcall(writefile, p, f.png)
+        local a = use(p)
+        if not a then
+            warn(TAG .. "getcustomasset failed for gif frame " .. p)
+            return nil
+        end
+        assets[i] = a
+        paths[#paths + 1] = p
+        totalDelay += f.delay
+    end
+    local avg = totalDelay / #frames
+    local manifest = prefix .. "_gif.txt"
+    pcall(writefile, manifest, ("%d,%.3f"):format(#frames, avg))
+    paths[#paths + 1] = manifest
+    info(cfg, ("gif split into %d frames. its own speed is ~%.3fs per frame, set your frame switch speed to about that")
+        :format(#frames, avg))
+    return assets, paths
 end
 
 local function findCached(prefix, kind)
@@ -195,14 +545,14 @@ local function download(url, kind, cfg, isAlt)
             local status = tostring(res.StatusCode or "?")
             if body and #body > 0 then
                 local ext = sniff(body)
-                if ext and good(kind, ext) then return body, ext end
+                if ext and good(kind, ext, cfg) then return body, ext end
                 if ext then
                     -- wrong format. for wiki links, ask the cdn for the original png first
                     if not isAlt then
                         local alt = wikiOriginal(url)
                         if alt then
                             local b2, e2 = download(alt, kind, cfg, true)
-                            if b2 and good(kind, e2) then return b2, e2 end
+                            if b2 and good(kind, e2, cfg) then return b2, e2 end
                         end
                     end
                     -- still not a supported format: use it anyway if allowed
@@ -228,7 +578,8 @@ local function download(url, kind, cfg, isAlt)
     return nil, reason
 end
 
--- downloads (or reuses cached) a link, returns a getcustomasset string or nil
+-- downloads (or reuses cached) a link. returns an ARRAY of getcustomasset strings
+-- (one entry normally, many for a gif) plus an array of the files used. nil on failure
 local function fetch(url, kind, cfg)
     if not (request and writefile and isfile and customAsset) then
         warn(TAG .. "executor can't download links (missing request/writefile/getcustomasset): " .. url)
@@ -248,10 +599,32 @@ local function fetch(url, kind, cfg)
     end
 
     if not cfg.ForceRedownload then
+        -- a gif we already split into png frames on an earlier run?
+        local manifest = prefix .. "_gif.txt"
+        if kind == "image" and readfile and isfile(manifest) then
+            local okr, txt = pcall(readfile, manifest)
+            local count, avg = tostring(okr and txt or ""):match("^(%d+),([%d%.]+)")
+            count = tonumber(count)
+            if count and count > 0 then
+                local assets, paths = {}, {manifest}
+                for i = 1, count do
+                    local p = ("%s_g%03d.png"):format(prefix, i)
+                    local a = isfile(p) and use(p) or nil
+                    if not a then assets = nil break end
+                    assets[i] = a
+                    paths[#paths + 1] = p
+                end
+                if assets then
+                    info(cfg, ("gif (cached): %d frames, its own speed is ~%ss per frame"):format(count, avg))
+                    return assets, paths
+                end
+            end
+        end
+
         local cached = findCached(prefix, kind)
         if cached then
             local asset = use(cached)
-            if asset then return asset end
+            if asset then return {asset}, {cached} end
             -- cached file is corrupt: delete it and download again
             if delfile then pcall(delfile, cached) end
         end
@@ -262,6 +635,11 @@ local function fetch(url, kind, cfg)
         warn(("%sdownload failed (%s): %s"):format(TAG, tostring(extOrReason), url))
         return nil
     end
+
+    if extOrReason == "gif" and kind == "image" and cfg.ConvertGifs then
+        return convertGif(body, prefix, cfg, use)
+    end
+
     if extOrReason == "webp" or extOrReason == "gif" then
         warn(("%sthis link only gives a %s file. roblox may not draw it (blank sprite). if it's blank, re-host it as png/jpg: %s")
             :format(TAG, extOrReason:upper(), url))
@@ -269,23 +647,30 @@ local function fetch(url, kind, cfg)
     local path = prefix .. "." .. extOrReason
     pcall(writefile, path, body)
     local asset = use(path)
-    if not asset then warn(TAG .. "getcustomasset failed for " .. path) end
-    return asset
+    if not asset then
+        warn(TAG .. "getcustomasset failed for " .. path)
+        return nil
+    end
+    return {asset}, {path}
 end
 
--- resolves every source in parallel; returns map src -> usable asset string (or false)
+-- resolves every source in parallel; returns map src -> ARRAY of usable assets (or false), plus file paths
 local function resolveAll(entries, cfg)
-    local out, pending = {}, 0
+    local out, paths, pending = {}, {}, 0
     for _, e in ipairs(entries) do
         local src = e.src
         if out[src] == nil then
             out[src] = false
             if isRobloxAsset(src) then
-                out[src] = src
+                out[src] = {src}
             elseif isLink(src) then
                 pending += 1
                 task.spawn(function()
-                    out[src] = fetch(src, e.kind, cfg) or false
+                    local assets, files = fetch(src, e.kind, cfg)
+                    out[src] = assets or false
+                    if assets and files then
+                        for _, p in ipairs(files) do paths[#paths + 1] = p end
+                    end
                     pending -= 1
                 end)
             else
@@ -296,10 +681,10 @@ local function resolveAll(entries, cfg)
     local deadline = os.clock() + cfg.DownloadTimeout
     while pending > 0 and os.clock() < deadline do task.wait(0.05) end
     if pending > 0 then
-        warn(("%sdownloads timed out after %ds (%d unfinished). raise DownloadTimeout"):format(
+        warn(("%sdownloads timed out after %ds (%d unfinished). raise DownloadTimeout (big gifs take longer)"):format(
             TAG, cfg.DownloadTimeout, pending))
     end
-    return out
+    return out, paths
 end
 
 local function toList(v)
@@ -365,25 +750,39 @@ function Brain.Run(userCfg)
     local themeSrc = type(theme) == "table" and normalize(theme.Id) or nil
     if themeSrc then entries[#entries + 1] = {src = themeSrc, kind = "audio"} end
 
-    local resolved = resolveAll(entries, cfg)
+    local resolved, downloadedPaths = resolveAll(entries, cfg)
+
+    -- deletes the files this run downloaded/used (only if DeleteDownloadsOnRemove is on)
+    local function wipeDownloads()
+        if cfg.DeleteDownloadsOnRemove and delfile then
+            for _, p in ipairs(downloadedPaths) do pcall(delfile, p) end
+        end
+    end
 
     local function frames(srcList)
         local out = {}
         for _, s in ipairs(srcList) do
-            if resolved[s] then out[#out + 1] = resolved[s] end
+            local r = resolved[s]
+            if r then
+                for _, a in ipairs(r) do out[#out + 1] = a end
+            end
         end
         return out
     end
     local idle, walk = frames(idleSrc), frames(walkSrc)
     if #idle == 0 and #walk > 0 then idle = {walk[1]} end
     if #walk == 0 then walk = idle end
-    info(cfg, ("loaded '%s': %d/%d idle frame(s), %d/%d walk frame(s)"):format(
-        cfg.SkinName, #frames(idleSrc), #idleSrc, #frames(walkSrc), #walkSrc))
+    info(cfg, ("loaded '%s': %d idle frame(s), %d walk frame(s)"):format(
+        cfg.SkinName, #frames(idleSrc), #frames(walkSrc)))
     if #idle == 0 then
         warn(TAG .. "no usable sprites loaded, nothing to show")
+        wipeDownloads()
         return nil
     end
-    if not char:IsDescendantOf(game) then return nil end
+    if not char:IsDescendantOf(game) then
+        wipeDownloads()
+        return nil
+    end
 
     local alive = true
     local conns, sounds = {}, {}
@@ -449,6 +848,7 @@ function Brain.Run(userCfg)
     -- player might have reset while we were loading
     if not char:IsDescendantOf(game) or humanoid.Health <= 0 then
         gui:Destroy()
+        wipeDownloads()
         return nil
     end
 
@@ -542,7 +942,7 @@ function Brain.Run(userCfg)
     if themeSrc and resolved[themeSrc] then
         local s = Instance.new("Sound")
         s.Name = "SkinBrainTheme"
-        s.SoundId = resolved[themeSrc]
+        s.SoundId = resolved[themeSrc][1]
         s.Volume = theme.Volume or 1
         s.Looped = true -- always loops until you reset/respawn
         s.PlaybackSpeed = theme.PlaybackSpeed or 1
@@ -720,6 +1120,7 @@ function Brain.Run(userCfg)
         end
         gui:Destroy()
         if trailHolder then trailHolder:Destroy() end
+        wipeDownloads()
         if env.__SkinBrainCleanup == destroy then env.__SkinBrainCleanup = nil end
     end
 
