@@ -1,4 +1,4 @@
--- SkinBrain v1.4
+-- SkinBrain v1.5
 -- the boring work: downloads/caching, frame logic, billboard, effects, cleanup.
 -- you never need to edit this. all settings live in SkinTemplate.lua.
 -- host it (github raw link) or put it in your executor's workspace as "SkinBrain.lua".
@@ -10,7 +10,7 @@ local ContentProvider = game:GetService("ContentProvider")
 
 local env = (getgenv and getgenv()) or _G
 local TAG = "[SkinBrain] "
-local Brain = {Version = "1.4"}
+local Brain = {Version = "1.5"}
 
 -- --- DEFAULTS ---
 local DEFAULTS = {
@@ -961,30 +961,41 @@ function Brain.Run(userCfg)
         end)
     end
 
-    -- PointLight modifier (optional, finds a PointLight inside your character)
+    -- PointLight modifier (optional). looks in your Head first, then anywhere in the character,
+    -- and keeps watching in case the game removes/recreates the light
     local pl = type(cfg.PointLightModifier) == "table" and cfg.PointLightModifier or nil
     local lightRef, lightOriginal
     if pl and pl.Enabled then
+        local function findLight()
+            local head = char:FindFirstChild("Head")
+            local light = head and head:FindFirstChildWhichIsA("PointLight")
+            return light or char:FindFirstChildWhichIsA("PointLight", true)
+        end
         task.spawn(function()
             local deadline = os.clock() + 6
-            local light = char:FindFirstChildWhichIsA("PointLight", true)
+            local light = findLight()
             while not light and alive and os.clock() < deadline do
                 task.wait(0.25)
-                light = char:FindFirstChildWhichIsA("PointLight", true)
+                light = findLight()
             end
             if not (light and alive) then
-                if alive then warn(TAG .. "PointLightModifier: no PointLight found in your character") end
+                if alive then warn(TAG .. "PointLightModifier: no PointLight found in your character (checked Head first)") end
                 return
             end
-            lightOriginal = {
-                Color = light.Color, Brightness = light.Brightness,
-                Range = light.Range, Enabled = light.Enabled,
-            }
-            if pl.Color then light.Color = pl.Color end
-            if pl.Brightness then light.Brightness = pl.Brightness end
-            if pl.Range then light.Range = pl.Range end
-            light.Enabled = true
-            lightRef = light
+            while alive do
+                if not (light and light.Parent) then
+                    light = findLight()
+                    lightRef = nil
+                end
+                if light and light ~= lightRef then
+                    lightOriginal = {
+                        Color = light.Color, Brightness = light.Brightness,
+                        Range = light.Range, Enabled = light.Enabled,
+                    }
+                    lightRef = light
+                end
+                task.wait(0.5)
+            end
         end)
     end
 
@@ -1077,9 +1088,16 @@ function Brain.Run(userCfg)
             end
         end
 
-        -- point light follows skin color (optional)
-        if lightRef and pl and pl.FollowSkinColor then
-            lightRef.Color = currentColor
+        -- point light: keep your values applied (some games reset their lights)
+        if lightRef and pl then
+            if pl.FollowSkinColor then
+                lightRef.Color = currentColor
+            elseif pl.Color and lightRef.Color ~= pl.Color then
+                lightRef.Color = pl.Color
+            end
+            if pl.Brightness and lightRef.Brightness ~= pl.Brightness then lightRef.Brightness = pl.Brightness end
+            if pl.Range and lightRef.Range ~= pl.Range then lightRef.Range = pl.Range end
+            if not lightRef.Enabled then lightRef.Enabled = true end
         end
 
         -- hide the real character
