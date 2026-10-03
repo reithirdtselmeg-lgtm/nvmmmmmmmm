@@ -942,11 +942,11 @@ function Brain.Run(userCfg)
                     em.Transparency = NumberSequence.new(cfg.AfterimageTransparency, 1)
                     em.Size = NumberSequence.new({
                         NumberSequenceKeypoint.new(0, baseSize, sizeEnv),
-                        NumberSequenceKeypoint.new(0.1, endSize, sizeEnv),
+                        NumberSequenceKeypoint.new(1, endSize, sizeEnv),
                     })
                     em.Squash = NumberSequence.new({
                         NumberSequenceKeypoint.new(0, squash, squashEnv),
-                        NumberSequenceKeypoint.new(0.1, squash, squashEnv),
+                        NumberSequenceKeypoint.new(1, squash, squashEnv),
                     })
                     em.Parent = attach
                     emitters[id] = em
