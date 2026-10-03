@@ -1,7 +1,17 @@
--- SkinBrain v1.7
--- the boring work: downloads/caching, frame logic, billboard, effects, cleanup.
--- you never need to edit this. all settings live in SkinTemplate.lua.
--- host it (github raw link) or put it in your executor's workspace as "SkinBrain.lua".
+--// ============================================================
+--// SkinBrain v1.8
+--// the boring work: downloads/caching, frame logic, billboard,
+--// effects, UI-layer afterimages, and cleanup.
+--//
+--// all settings live in SkinTemplate.lua
+--//
+--// v1.8:
+--// - afterimages use ImageLabels instead of ParticleEmitters
+--// - afterimages are ordered with ZIndex
+--// - no physical 3D depth layering
+--// - no camera LookVector offset
+--// - ghosts live inside the same BillboardGui as the sprite
+--// ============================================================
 
 local Players         = game:GetService("Players")
 local RunService      = game:GetService("RunService")
@@ -9,37 +19,61 @@ local ContentProvider = game:GetService("ContentProvider")
 
 local env = (getgenv and getgenv()) or _G
 local TAG = "[SkinBrain] "
-local Brain = {Version = "1.7"}
 
--- --- DEFAULTS ---
+local Brain = {
+    Version = "1.8",
+}
+
+-- ============================================================
+-- DEFAULTS
+-- ============================================================
+
 local DEFAULTS = {
     SkinName = "Skin",
 
-    -- sprites (rbxassetid / number / link). lists, any amount of frames
+    -- sprites
     Idle = {},
     Walk = {},
-    IdleFrameSwitchSpeed = 0.25,   -- seconds per idle frame
+
+    IdleFrameSwitchSpeed = 0.25,
+    WalkFrameSwitchSpeed = nil,
+
     IdleFrameCycle = false,
     WalkFrameCycle = false,
-    ScaleWalkWithSpeed = false,    -- walk animation speeds up/slows down with your real speed
+
+    ScaleWalkWithSpeed = false,
 
     -- billboard
     sizeX = 7,
     sizeY = 7,
     studsOffsetY = 0.25,
+
     Tint = Color3.new(1, 1, 1),
     Transparency = 0,
+
     LightInfluence = 1,
     AlwaysOnTop = false,
-    PixelArt = false,              -- crisp pixels instead of smoothed
+    PixelArt = false,
+
     HideCharacter = false,
     HideNameTag = false,
     RemoveOtherBillboards = true,
 
-    -- effects
+    -- ========================================================
+    -- Z LAYERS
+    -- ========================================================
+
+    -- lower ZIndex = farther behind the sprite visually
+    AfterimageZIndex = 1,
+    SpriteZIndex = 2,
+
+    -- ========================================================
+    -- EFFECTS
+    -- ========================================================
+
     FrameJiggle = false,
-    FrameJiggleStrength = 0.03,    -- how much it squashes (0.12 = down to 88% height)
-    FrameJiggleEase = 1.5,           -- 1 = even squash across the frame, higher = snaps right before the change
+    FrameJiggleStrength = 0.03,
+    FrameJiggleEase = 1.5,
 
     GlitchEffect = false,
     GlitchStrength = 0.4,
@@ -48,104 +82,195 @@ local DEFAULTS = {
     RainbowKeyframeColor = false,
     RainbowSpeed = 10,
 
+    -- ========================================================
+    -- UI AFTERIMAGE
+    -- ========================================================
+
     AfterimageEffect = false,
+
     AfterimageWalkRate = 0.06,
     AfterimageIdleRate = 0.18,
+
     AfterimageMax = 40,
+
     AfterimageFadeTime = 0.75,
     AfterimageTransparency = 0.4,
+
+    -- visual size
+    AfterimageSizeScale = 0.5,
+    AfterimageGrow = 0,
+
+    -- visual distortion
     AfterimageDistort = true,
-    AfterimageSizeScale = 0.5,       -- multiplies the size of each ghost
-    AfterimageGrow = 0,            -- ghosts grow as they fade (0.2 = 20% bigger by the end)
-    AfterimageLightEmission = 0.5,   -- 0 = normal, 1 = glowing/additive (great with rainbow)
 
-    WobbleEffect = false,          -- sprite tilts side to side
-    WobbleStrength = 6,            -- degrees
-    WobbleSpeed = 1.6,             -- sways per second
-    WobbleWhenIdle = false,        -- false = only while walking
+    -- screen/UI movement of ghosts
+    -- these are PIXEL offsets, not 3D/stud offsets
+    AfterimageOffsetX = 0,
+    AfterimageOffsetY = 0,
 
-    HoverBob = false,              -- floats up and down
-    HoverHeight = 0.3,             -- studs
-    HoverSpeed = 0.6,              -- bobs per second
-    HoverOnlyWhenIdle = false,     -- true = only bobs while standing still
+    -- 0 = normal, 1 = strong additive-like brightness
+    AfterimageLightEmission = 0.5,
 
-    BreathEffect = false,          -- gentle squash/stretch while standing still
+    -- ========================================================
+    -- OTHER EFFECTS
+    -- ========================================================
+
+    WobbleEffect = false,
+    WobbleStrength = 6,
+    WobbleSpeed = 1.6,
+    WobbleWhenIdle = false,
+
+    HoverBob = false,
+    HoverHeight = 0.3,
+    HoverSpeed = 0.6,
+    HoverOnlyWhenIdle = false,
+
+    BreathEffect = false,
     BreathStrength = 0.03,
     BreathSpeed = 0.4,
 
-    GhostPulse = false,            -- fades in and out slowly
-    GhostPulseMin = 0.3,           -- how visible it gets at its faintest (0 = fully gone, 1 = no pulse)
-    GhostPulseSpeed = 0.35,        -- pulses per second
+    GhostPulse = false,
+    GhostPulseMin = 0.3,
+    GhostPulseSpeed = 0.35,
 
-    FlickerEffect = false,         -- random blinks, like unstable data
-    FlickerRate = 1.5,             -- average flickers per second
-    FlickerDuration = 0.08,        -- seconds per flicker
-    FlickerDepth = 0.85,           -- how invisible it gets during a flicker
+    FlickerEffect = false,
+    FlickerRate = 1.5,
+    FlickerDuration = 0.08,
+    FlickerDepth = 0.85,
 
-    BoilEffect = false,            -- choppy hand-drawn jitter
+    BoilEffect = false,
     BoilStrength = 1.5,
-    BoilRate = 8,                  -- jitters per second
+    BoilRate = 8,
 
-    -- downloads / logging
+    -- ========================================================
+    -- DOWNLOADS / LOGGING
+    -- ========================================================
+
     ForceRedownload = false,
+
     DownloadTimeout = 20,
     DownloadRetries = 2,
-    AllowUnsupportedFormats = true, -- try webp/gif anyway if a link only gives those (roblox may not draw them)
-    ConvertGifs = true,            -- gif links are split into png frames automatically (roblox can't play gifs)
-    GifMaxFrames = 60,             -- gifs longer than this are cut off
-    GifMaxSize = 400,              -- gifs wider/taller than this (pixels) are refused, shrink them first
-    DeleteDownloadsOnRemove = false, -- true = delete the downloaded files when the skin is removed (reset/respawn)
-    Debug = true,                  -- false = only print problems
+
+    AllowUnsupportedFormats = true,
+
+    ConvertGifs = true,
+    GifMaxFrames = 60,
+    GifMaxSize = 400,
+
+    DeleteDownloadsOnRemove = false,
+
+    Debug = true,
 }
--- settings that are allowed to be nil (so they aren't flagged as typos)
-local OPTIONAL = {WalkFrameSwitchSpeed = true, ThemeSound = true, PointLightModifier = true}
+
+local OPTIONAL = {
+    WalkFrameSwitchSpeed = true,
+    ThemeSound = true,
+    PointLightModifier = true,
+}
+
+-- ============================================================
+-- CONFIG
+-- ============================================================
 
 local function buildConfig(user)
     local cfg = {}
+
     for k, v in pairs(user or {}) do
         if DEFAULTS[k] == nil and not OPTIONAL[k] then
             warn(TAG .. "unknown setting '" .. tostring(k) .. "' (typo?)")
         end
+
         cfg[k] = v
     end
+
     for k, def in pairs(DEFAULTS) do
         local want = typeof(def)
+
         if cfg[k] == nil then
             cfg[k] = def
         elseif want ~= "table" and typeof(cfg[k]) ~= want then
-            warn(("%s'%s' should be a %s, using the default (%s)"):format(TAG, k, want, tostring(def)))
+            warn((
+                "%s'%s' should be a %s, using the default (%s)"
+            ):format(TAG, k, want, tostring(def)))
+
             cfg[k] = def
         end
     end
+
     cfg.Transparency = math.clamp(cfg.Transparency, 0, 1)
     cfg.LightInfluence = math.clamp(cfg.LightInfluence, 0, 1)
-    cfg.AfterimageMax = math.max(math.floor(cfg.AfterimageMax), 0)
-    cfg.AfterimageSizeScale = math.max(cfg.AfterimageSizeScale, 0.05)
-    cfg.AfterimageLightEmission = math.clamp(cfg.AfterimageLightEmission, 0, 1)
-    cfg.GhostPulseMin = math.clamp(cfg.GhostPulseMin, 0, 1)
-    if cfg.WalkFrameSwitchSpeed ~= nil and type(cfg.WalkFrameSwitchSpeed) ~= "number" then
-        warn(TAG .. "WalkFrameSwitchSpeed should be a number or nil, using the default")
+
+    cfg.AfterimageMax =
+        math.max(math.floor(cfg.AfterimageMax), 0)
+
+    cfg.AfterimageSizeScale =
+        math.max(cfg.AfterimageSizeScale, 0.05)
+
+    cfg.AfterimageLightEmission =
+        math.clamp(cfg.AfterimageLightEmission, 0, 1)
+
+    cfg.GhostPulseMin =
+        math.clamp(cfg.GhostPulseMin, 0, 1)
+
+    if cfg.WalkFrameSwitchSpeed ~= nil
+        and type(cfg.WalkFrameSwitchSpeed) ~= "number"
+    then
+        warn(
+            TAG ..
+            "WalkFrameSwitchSpeed should be a number or nil, using the default"
+        )
+
         cfg.WalkFrameSwitchSpeed = nil
     end
+
     return cfg
 end
 
 local function info(cfg, msg)
-    if cfg.Debug then warn(TAG .. msg) end
+    if cfg.Debug then
+        warn(TAG .. msg)
+    end
 end
 
--- --- EXECUTOR FUNCTIONS ---
-local request = (syn and syn.request) or (http and http.request) or http_request or request
-local customAsset = getcustomasset or getsynasset
+-- ============================================================
+-- EXECUTOR FUNCTIONS
+-- ============================================================
+
+local request =
+    (syn and syn.request)
+    or (http and http.request)
+    or http_request
+    or request
+
+local customAsset =
+    getcustomasset
+    or getsynasset
+
 local CACHE_DIR = "SkinBrain"
 
--- --- SOURCE HANDLING ---
+-- ============================================================
+-- SOURCE HANDLING
+-- ============================================================
+
 local function normalize(src)
-    if type(src) == "number" then return "rbxassetid://" .. math.floor(src) end
-    if type(src) ~= "string" then return nil end
+    if type(src) == "number" then
+        return "rbxassetid://" .. math.floor(src)
+    end
+
+    if type(src) ~= "string" then
+        return nil
+    end
+
     src = src:match("^%s*(.-)%s*$")
-    if src == "" then return nil end
-    if src:match("^%d+$") then return "rbxassetid://" .. src end
+
+    if src == "" then
+        return nil
+    end
+
+    if src:match("^%d+$") then
+        return "rbxassetid://" .. src
+    end
+
     return src
 end
 
@@ -162,330 +287,823 @@ end
 
 local function hash(s)
     local h = 5381
-    for i = 1, #s do h = (h * 33 + s:byte(i)) % 4294967296 end
+
+    for i = 1, #s do
+        h = (h * 33 + s:byte(i)) % 4294967296
+    end
+
     return ("%08x"):format(h)
 end
 
-local IMAGE_EXTS = {"png", "jpg", "webp", "gif"}
-local AUDIO_EXTS = {"mp3", "ogg"}
-
--- headers that make sites (wikis/cdns) hand over the plain png instead of webp or a block page
-local HEADERS = {
-    ["User-Agent"] = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36",
-    ["Accept"] = "image/png,image/jpeg,audio/mpeg,audio/ogg,*/*;q=0.5",
+local IMAGE_EXTS = {
+    "png",
+    "jpg",
+    "webp",
+    "gif",
 }
 
--- detect the REAL file type from the bytes (links often lie about their extension)
+local AUDIO_EXTS = {
+    "mp3",
+    "ogg",
+}
+
+local HEADERS = {
+    ["User-Agent"] =
+        "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36",
+
+    ["Accept"] =
+        "image/png,image/jpeg,audio/mpeg,audio/ogg,*/*;q=0.5",
+}
+
+-- ============================================================
+-- FILE TYPE SNIFFING
+-- ============================================================
+
 local function sniff(body)
     local b1, b2 = body:byte(1, 2)
-    if body:sub(2, 4) == "PNG" then return "png" end
-    if b1 == 0xFF and b2 == 0xD8 then return "jpg" end
-    if body:sub(1, 3) == "GIF" then return "gif" end
+
+    if body:sub(2, 4) == "PNG" then
+        return "png"
+    end
+
+    if b1 == 0xFF and b2 == 0xD8 then
+        return "jpg"
+    end
+
+    if body:sub(1, 3) == "GIF" then
+        return "gif"
+    end
+
     if body:sub(1, 4) == "RIFF" then
         local kind = body:sub(9, 12)
-        if kind == "WEBP" then return "webp" end
-        if kind == "WAVE" then return "wav" end
+
+        if kind == "WEBP" then
+            return "webp"
+        end
+
+        if kind == "WAVE" then
+            return "wav"
+        end
     end
-    if body:sub(1, 4) == "OggS" then return "ogg" end
-    if body:sub(1, 3) == "ID3" or (b1 == 0xFF and b2 and b2 >= 0xE0) then return "mp3" end
+
+    if body:sub(1, 4) == "OggS" then
+        return "ogg"
+    end
+
+    if body:sub(1, 3) == "ID3"
+        or (b1 == 0xFF and b2 and b2 >= 0xE0)
+    then
+        return "mp3"
+    end
+
     return nil
 end
 
--- formats roblox definitely supports
 local function good(kind, ext, cfg)
-    if kind == "audio" then return ext == "mp3" or ext == "ogg" end
-    if ext == "gif" and cfg and cfg.ConvertGifs then return true end -- we split gifs into png frames
-    return ext == "png" or ext == "jpg"
+    if kind == "audio" then
+        return ext == "mp3" or ext == "ogg"
+    end
+
+    if ext == "gif"
+        and cfg
+        and cfg.ConvertGifs
+    then
+        return true
+    end
+
+    return ext == "png"
+        or ext == "jpg"
 end
 
--- formats we'll still try if nothing better is available
 local function tolerated(kind, ext, cfg)
-    return kind == "image" and cfg.AllowUnsupportedFormats and (ext == "webp" or ext == "gif")
+    return kind == "image"
+        and cfg.AllowUnsupportedFormats
+        and (
+            ext == "webp"
+            or ext == "gif"
+        )
 end
 
--- fandom/wikia cdn serves webp by default; this flag asks it for the original png instead
 local function wikiOriginal(url)
-    if not (url:find("static.wikia.nocookie.net", 1, true) or url:find("vignette.wikia.nocookie.net", 1, true)) then
+    if not (
+        url:find(
+            "static.wikia.nocookie.net",
+            1,
+            true
+        )
+        or url:find(
+            "vignette.wikia.nocookie.net",
+            1,
+            true
+        )
+    ) then
         return nil
     end
-    if url:find("format=original", 1, true) then return nil end
-    return url .. (url:find("?", 1, true) and "&" or "?") .. "format=original"
+
+    if url:find("format=original", 1, true) then
+        return nil
+    end
+
+    return url
+        .. (
+            url:find("?", 1, true)
+            and "&"
+            or "?"
+        )
+        .. "format=original"
 end
 
--- --- GIF DECODER ---
--- roblox can't play gifs, so a gif is decoded into separate png frames
--- (the brain then animates them like any other frame list)
-local band, bor, bxor, lshift, rshift = bit32.band, bit32.bor, bit32.bxor, bit32.lshift, bit32.rshift
-local unpack = table.unpack or unpack
+-- ============================================================
+-- GIF DECODER
+-- ============================================================
+
+local band = bit32.band
+local bor = bit32.bor
+local bxor = bit32.bxor
+local lshift = bit32.lshift
+local rshift = bit32.rshift
+
+local unpack =
+    table.unpack
+    or unpack
 
 local function rd16(s, p)
     local a, b = s:byte(p, p + 1)
-    return (a or 0) + (b or 0) * 256
+
+    return (a or 0)
+        + (b or 0) * 256
 end
 
 local CRC_TABLE
+
 local function crcTable()
-    if CRC_TABLE then return CRC_TABLE end
+    if CRC_TABLE then
+        return CRC_TABLE
+    end
+
     CRC_TABLE = {}
+
     for i = 0, 255 do
         local c = i
+
         for _ = 1, 8 do
-            if band(c, 1) == 1 then c = bxor(0xEDB88320, rshift(c, 1)) else c = rshift(c, 1) end
+            if band(c, 1) == 1 then
+                c = bxor(
+                    0xEDB88320,
+                    rshift(c, 1)
+                )
+            else
+                c = rshift(c, 1)
+            end
         end
+
         CRC_TABLE[i] = c
     end
+
     return CRC_TABLE
 end
 
 local function u32(n)
-    return string.char(band(rshift(n, 24), 255), band(rshift(n, 16), 255), band(rshift(n, 8), 255), band(n, 255))
+    return string.char(
+        band(rshift(n, 24), 255),
+        band(rshift(n, 16), 255),
+        band(rshift(n, 8), 255),
+        band(n, 255)
+    )
 end
 
--- canvas = flat array of bytes, laid out exactly like raw png scanlines (filter byte 0, then RGBA per pixel)
 local function encodePNG(w, h, canvas)
     local T = crcTable()
     local total = #canvas
 
-    local ihdr = u32(w) .. u32(h) .. "\8\6\0\0\0"
-    local crcI = 0xFFFFFFFF
-    local ihdrFull = "IHDR" .. ihdr
-    for i = 1, #ihdrFull do
-        crcI = bxor(T[band(bxor(crcI, ihdrFull:byte(i)), 255)], rshift(crcI, 8))
-    end
-    crcI = bxor(crcI, 0xFFFFFFFF)
+    local ihdr =
+        u32(w)
+        .. u32(h)
+        .. "\8\6\0\0\0"
 
-    local idat, idatLen = {}, 0
+    local crcI = 0xFFFFFFFF
+
+    local ihdrFull =
+        "IHDR"
+        .. ihdr
+
+    for i = 1, #ihdrFull do
+        crcI = bxor(
+            T[
+                band(
+                    bxor(
+                        crcI,
+                        ihdrFull:byte(i)
+                    ),
+                    255
+                )
+            ],
+            rshift(crcI, 8)
+        )
+    end
+
+    crcI = bxor(
+        crcI,
+        0xFFFFFFFF
+    )
+
+    local idat = {}
+    local idatLen = 0
+
     local crc = 0xFFFFFFFF
+
     local function feedStr(str)
         for i = 1, #str do
-            crc = bxor(T[band(bxor(crc, str:byte(i)), 255)], rshift(crc, 8))
+            crc = bxor(
+                T[
+                    band(
+                        bxor(
+                            crc,
+                            str:byte(i)
+                        ),
+                        255
+                    )
+                ],
+                rshift(crc, 8)
+            )
         end
     end
+
     local function push(str)
         idat[#idat + 1] = str
         idatLen += #str
     end
 
     feedStr("IDAT")
-    local zh = "\120\1" -- zlib header, no compression
+
+    local zh = "\120\1"
+
     feedStr(zh)
     push(zh)
 
     local a, b = 1, 0
     local pos = 1
+
     while pos <= total do
-        local n = math.min(65535, total - pos + 1)
-        local last = pos + n - 1
-        local final = (last >= total) and 1 or 0
-        local nlen = bxor(n, 0xFFFF)
-        local bh = string.char(final, band(n, 255), rshift(n, 8), band(nlen, 255), rshift(nlen, 8))
+        local n = math.min(
+            65535,
+            total - pos + 1
+        )
+
+        local last =
+            pos + n - 1
+
+        local final =
+            (last >= total)
+            and 1
+            or 0
+
+        local nlen =
+            bxor(
+                n,
+                0xFFFF
+            )
+
+        local bh = string.char(
+            final,
+            band(n, 255),
+            rshift(n, 8),
+            band(nlen, 255),
+            rshift(nlen, 8)
+        )
+
         feedStr(bh)
         push(bh)
+
         local i = pos
+
         while i <= last do
-            local j = math.min(i + 3999, last)
+            local j =
+                math.min(
+                    i + 3999,
+                    last
+                )
+
             for k = i, j do
                 local v = canvas[k]
-                crc = bxor(T[band(bxor(crc, v), 255)], rshift(crc, 8))
+
+                crc = bxor(
+                    T[
+                        band(
+                            bxor(crc, v),
+                            255
+                        )
+                    ],
+                    rshift(crc, 8)
+                )
+
                 a += v
                 b += a
             end
-            push(string.char(unpack(canvas, i, j)))
+
+            push(
+                string.char(
+                    unpack(canvas, i, j)
+                )
+            )
+
             i = j + 1
         end
+
         a %= 65521
         b %= 65521
+
         pos += n
     end
 
-    local adler = u32(b * 65536 + a)
+    local adler =
+        u32(
+            b * 65536 + a
+        )
+
     feedStr(adler)
     push(adler)
-    crc = bxor(crc, 0xFFFFFFFF)
+
+    crc = bxor(
+        crc,
+        0xFFFFFFFF
+    )
 
     return table.concat({
         "\137PNG\r\n\26\n",
-        u32(13), "IHDR", ihdr, u32(crcI),
-        u32(idatLen), "IDAT", table.concat(idat), u32(crc),
+
+        u32(13),
+        "IHDR",
+        ihdr,
+        u32(crcI),
+
+        u32(idatLen),
+        "IDAT",
+        table.concat(idat),
+        u32(crc),
+
         "\0\0\0\0IEND\174\66\96\130",
     })
 end
 
 local function readPalette(data, pos, bits)
-    local size = lshift(1, bits + 1)
+    local size =
+        lshift(1, bits + 1)
+
     local pal = {}
+
     for i = 0, size - 1 do
-        local r, g, b = data:byte(pos + i * 3, pos + i * 3 + 2)
-        pal[i] = {r or 0, g or 0, b or 0}
+        local r, g, b =
+            data:byte(
+                pos + i * 3,
+                pos + i * 3 + 2
+            )
+
+        pal[i] = {
+            r or 0,
+            g or 0,
+            b or 0,
+        }
     end
-    return pal, pos + size * 3
+
+    return pal,
+        pos + size * 3
 end
 
--- returns an array of palette indexes (1-based) and how many were decoded
-local function lzwDecode(data, minCode, pixelCount)
-    if minCode < 2 or minCode > 8 then return nil, "bad lzw code size" end
-    local out = table.create(pixelCount, 0)
+local function lzwDecode(
+    data,
+    minCode,
+    pixelCount
+)
+    if minCode < 2
+        or minCode > 8
+    then
+        return nil,
+            "bad lzw code size"
+    end
+
+    local out =
+        table.create(
+            pixelCount,
+            0
+        )
+
     local outN = 0
-    local clear = lshift(1, minCode)
-    local eoi = clear + 1
-    local codeSize = minCode + 1
-    local nextCode = eoi + 1
-    local prefix, suffix, stack = {}, {}, {}
+
+    local clear =
+        lshift(1, minCode)
+
+    local eoi =
+        clear + 1
+
+    local codeSize =
+        minCode + 1
+
+    local nextCode =
+        eoi + 1
+
+    local prefix = {}
+    local suffix = {}
+    local stack = {}
+
     local prev
-    local bitBuf, bitCount, pos, len = 0, 0, 1, #data
+
+    local bitBuf = 0
+    local bitCount = 0
+    local pos = 1
+    local len = #data
 
     while outN < pixelCount do
         while bitCount < codeSize do
-            if pos > len then return out, outN end
-            bitBuf = bor(bitBuf, lshift(data:byte(pos), bitCount))
+            if pos > len then
+                return out, outN
+            end
+
+            bitBuf =
+                bor(
+                    bitBuf,
+                    lshift(
+                        data:byte(pos),
+                        bitCount
+                    )
+                )
+
             bitCount += 8
             pos += 1
         end
-        local code = band(bitBuf, lshift(1, codeSize) - 1)
-        bitBuf = rshift(bitBuf, codeSize)
+
+        local code =
+            band(
+                bitBuf,
+                lshift(
+                    1,
+                    codeSize
+                ) - 1
+            )
+
+        bitBuf =
+            rshift(
+                bitBuf,
+                codeSize
+            )
+
         bitCount -= codeSize
 
         if code == clear then
-            codeSize = minCode + 1
-            nextCode = eoi + 1
+            codeSize =
+                minCode + 1
+
+            nextCode =
+                eoi + 1
+
             prev = nil
+
         elseif code == eoi then
             break
+
         elseif prev == nil then
-            if code >= clear then return nil, "corrupt gif data" end
+            if code >= clear then
+                return nil,
+                    "corrupt gif data"
+            end
+
             outN += 1
             out[outN] = code
             prev = code
+
         else
-            if code > nextCode then return nil, "corrupt gif data" end
-            local isK = (code == nextCode)
-            local cur = isK and prev or code
+            if code > nextCode then
+                return nil,
+                    "corrupt gif data"
+            end
+
+            local isK =
+                code == nextCode
+
+            local cur =
+                isK
+                and prev
+                or code
+
             local n = 0
+
             while cur >= clear do
                 n += 1
-                stack[n] = suffix[cur]
-                cur = prefix[cur]
+
+                stack[n] =
+                    suffix[cur]
+
+                cur =
+                    prefix[cur]
             end
+
             local root = cur
+
             outN += 1
             out[outN] = root
+
             for i = n, 1, -1 do
                 outN += 1
-                out[outN] = stack[i]
+                out[outN] =
+                    stack[i]
             end
+
             if isK then
                 outN += 1
-                out[outN] = root
+                out[outN] =
+                    root
             end
+
             if nextCode < 4096 then
-                prefix[nextCode] = prev
-                suffix[nextCode] = root
+                prefix[nextCode] =
+                    prev
+
+                suffix[nextCode] =
+                    root
+
                 nextCode += 1
-                if nextCode == lshift(1, codeSize) and codeSize < 12 then codeSize += 1 end
+
+                if nextCode ==
+                    lshift(1, codeSize)
+                    and codeSize < 12
+                then
+                    codeSize += 1
+                end
             end
+
             prev = code
         end
     end
+
     return out, outN
 end
 
 local function interlaceOrder(h)
     local order = {}
-    for _, pass in ipairs({{0, 8}, {4, 8}, {2, 4}, {1, 2}}) do
-        for r = pass[1], h - 1, pass[2] do order[#order + 1] = r end
+
+    for _, pass in ipairs({
+        {0, 8},
+        {4, 8},
+        {2, 4},
+        {1, 2},
+    }) do
+        for r = pass[1], h - 1, pass[2] do
+            order[#order + 1] = r
+        end
     end
+
     return order
 end
 
--- returns {{png = "<bytes>", delay = seconds}, ...} or nil, reason
 local function decodeGif(data, cfg)
-    if data:sub(1, 3) ~= "GIF" then return nil, "not a gif file" end
-    local w, h = rd16(data, 7), rd16(data, 9)
-    if w == 0 or h == 0 then return nil, "empty gif" end
-    if w > cfg.GifMaxSize or h > cfg.GifMaxSize then
-        return nil, ("gif is %dx%d, bigger than GifMaxSize (%d). shrink it first (ezgif.com/resize)")
-            :format(w, h, cfg.GifMaxSize)
+    if data:sub(1, 3) ~= "GIF" then
+        return nil,
+            "not a gif file"
     end
 
-    local flags = data:byte(11)
+    local w =
+        rd16(data, 7)
+
+    local h =
+        rd16(data, 9)
+
+    if w == 0 or h == 0 then
+        return nil,
+            "empty gif"
+    end
+
+    if w > cfg.GifMaxSize
+        or h > cfg.GifMaxSize
+    then
+        return nil,
+            (
+                "gif is %dx%d, bigger than GifMaxSize (%d)"
+            ):format(
+                w,
+                h,
+                cfg.GifMaxSize
+            )
+    end
+
+    local flags =
+        data:byte(11)
+
     local pos = 14
     local gct
+
     if band(flags, 0x80) ~= 0 then
-        gct, pos = readPalette(data, pos, band(flags, 7))
+        gct, pos =
+            readPalette(
+                data,
+                pos,
+                band(flags, 7)
+            )
     end
 
-    local stride = 1 + w * 4
-    local canvas = table.create(h * stride, 0)
+    local stride =
+        1 + w * 4
+
+    local canvas =
+        table.create(
+            h * stride,
+            0
+        )
+
     local frames = {}
     local gce
+
     local len = #data
 
     while pos <= len do
-        local block = data:byte(pos)
+        local block =
+            data:byte(pos)
+
         if block == 0x3B then
             break
+
         elseif block == 0x21 then
-            if data:byte(pos + 1) == 0xF9 then
-                local pk = data:byte(pos + 3)
+            if data:byte(pos + 1) ==
+                0xF9
+            then
+                local pk =
+                    data:byte(pos + 3)
+
                 gce = {
-                    disposal = band(rshift(pk, 2), 7),
-                    transparent = (band(pk, 1) == 1) and data:byte(pos + 6) or nil,
-                    delay = rd16(data, pos + 4) / 100,
+                    disposal =
+                        band(
+                            rshift(pk, 2),
+                            7
+                        ),
+
+                    transparent =
+                        (
+                            band(pk, 1) == 1
+                        )
+                        and data:byte(pos + 6)
+                        or nil,
+
+                    delay =
+                        rd16(
+                            data,
+                            pos + 4
+                        ) / 100,
                 }
             end
+
             pos += 2
+
             while true do
-                local n = data:byte(pos)
-                if not n then break end
+                local n =
+                    data:byte(pos)
+
+                if not n then
+                    break
+                end
+
                 pos += 1 + n
-                if n == 0 then break end
+
+                if n == 0 then
+                    break
+                end
             end
+
         elseif block == 0x2C then
-            local ix, iy = rd16(data, pos + 1), rd16(data, pos + 3)
-            local iw, ih = rd16(data, pos + 5), rd16(data, pos + 7)
-            local ipk = data:byte(pos + 9)
+            local ix =
+                rd16(data, pos + 1)
+
+            local iy =
+                rd16(data, pos + 3)
+
+            local iw =
+                rd16(data, pos + 5)
+
+            local ih =
+                rd16(data, pos + 7)
+
+            local ipk =
+                data:byte(pos + 9)
+
             pos += 10
+
             local palette = gct
+
             if band(ipk, 0x80) ~= 0 then
-                palette, pos = readPalette(data, pos, band(ipk, 7))
+                palette, pos =
+                    readPalette(
+                        data,
+                        pos,
+                        band(ipk, 7)
+                    )
             end
-            local interlaced = band(ipk, 0x40) ~= 0
-            local minCode = data:byte(pos)
+
+            local interlaced =
+                band(ipk, 0x40) ~= 0
+
+            local minCode =
+                data:byte(pos)
+
             pos += 1
+
             local chunks = {}
+
             while true do
-                local n = data:byte(pos)
+                local n =
+                    data:byte(pos)
+
                 pos += 1
-                if not n or n == 0 then break end
-                chunks[#chunks + 1] = data:sub(pos, pos + n - 1)
+
+                if not n or n == 0 then
+                    break
+                end
+
+                chunks[#chunks + 1] =
+                    data:sub(
+                        pos,
+                        pos + n - 1
+                    )
+
                 pos += n
             end
 
-            local idx, why = lzwDecode(table.concat(chunks), minCode or 0, iw * ih)
-            if not idx then return nil, why end
+            local idx, why =
+                lzwDecode(
+                    table.concat(chunks),
+                    minCode or 0,
+                    iw * ih
+                )
 
-            local g = gce or {disposal = 0, delay = 0.1}
+            if not idx then
+                return nil, why
+            end
+
+            local g =
+                gce
+                or {
+                    disposal = 0,
+                    delay = 0.1,
+                }
+
             gce = nil
+
             local saved
-            if g.disposal == 3 then saved = table.clone(canvas) end
-            local transparent = g.transparent
-            local order = interlaced and interlaceOrder(ih) or nil
+
+            if g.disposal == 3 then
+                saved =
+                    table.clone(canvas)
+            end
+
+            local transparent =
+                g.transparent
+
+            local order =
+                interlaced
+                and interlaceOrder(ih)
+                or nil
 
             for row = 0, ih - 1 do
-                local y = iy + (order and order[row + 1] or row)
+                local y =
+                    iy
+                    + (
+                        order
+                        and order[row + 1]
+                        or row
+                    )
+
                 if y < h then
                     for col = 0, iw - 1 do
-                        local x = ix + col
+                        local x =
+                            ix + col
+
                         if x < w then
-                            local c = idx[row * iw + col + 1]
+                            local c =
+                                idx[
+                                    row * iw
+                                    + col
+                                    + 1
+                                ]
+
                             if c ~= transparent then
-                                local color = palette and palette[c]
+                                local color =
+                                    palette
+                                    and palette[c]
+
                                 if color then
-                                    local p = y * stride + 2 + x * 4
-                                    canvas[p] = color[1]
-                                    canvas[p + 1] = color[2]
-                                    canvas[p + 2] = color[3]
-                                    canvas[p + 3] = 255
+                                    local p =
+                                        y * stride
+                                        + 2
+                                        + x * 4
+
+                                    canvas[p] =
+                                        color[1]
+
+                                    canvas[p + 1] =
+                                        color[2]
+
+                                    canvas[p + 2] =
+                                        color[3]
+
+                                    canvas[p + 3] =
+                                        255
                                 end
                             end
                         end
@@ -493,782 +1111,2365 @@ local function decodeGif(data, cfg)
                 end
             end
 
-            local delay = g.delay
-            if delay < 0.02 then delay = 0.1 end -- browsers treat tiny delays as 0.1s
-            frames[#frames + 1] = {png = encodePNG(w, h, canvas), delay = delay}
+            local delay =
+                g.delay
 
-            -- prepare the canvas for the next frame
+            if delay < 0.02 then
+                delay = 0.1
+            end
+
+            frames[#frames + 1] = {
+                png =
+                    encodePNG(
+                        w,
+                        h,
+                        canvas
+                    ),
+
+                delay = delay,
+            }
+
             if g.disposal == 2 then
-                for y = iy, math.min(iy + ih - 1, h - 1) do
-                    for x = ix, math.min(ix + iw - 1, w - 1) do
-                        local p = y * stride + 2 + x * 4
-                        canvas[p], canvas[p + 1], canvas[p + 2], canvas[p + 3] = 0, 0, 0, 0
+                for y = iy,
+                    math.min(
+                        iy + ih - 1,
+                        h - 1
+                    )
+                do
+                    for x = ix,
+                        math.min(
+                            ix + iw - 1,
+                            w - 1
+                        )
+                    do
+                        local p =
+                            y * stride
+                            + 2
+                            + x * 4
+
+                        canvas[p] = 0
+                        canvas[p + 1] = 0
+                        canvas[p + 2] = 0
+                        canvas[p + 3] = 0
                     end
                 end
-            elseif g.disposal == 3 and saved then
+
+            elseif g.disposal == 3
+                and saved
+            then
                 canvas = saved
             end
 
-            task.wait() -- keep the game responsive while decoding
-            if #frames >= cfg.GifMaxFrames then
-                warn(("%sgif has more than %d frames, the rest were cut off (raise GifMaxFrames)")
-                    :format(TAG, cfg.GifMaxFrames))
+            task.wait()
+
+            if #frames >=
+                cfg.GifMaxFrames
+            then
+                warn(
+                    (
+                        "%sgif has more than %d frames, "
+                        .. "the rest were cut off"
+                    ):format(
+                        TAG,
+                        cfg.GifMaxFrames
+                    )
+                )
+
                 break
             end
+
         else
-            pos += 1 -- unknown byte, skip
+            pos += 1
         end
     end
 
-    if #frames == 0 then return nil, "gif had no frames" end
+    if #frames == 0 then
+        return nil,
+            "gif had no frames"
+    end
+
     return frames
 end
 
--- decodes a gif, saves each frame as a png, returns asset array + file paths
-local function convertGif(body, prefix, cfg, use)
-    local ok, frames, err = pcall(decodeGif, body, cfg)
+local function convertGif(
+    body,
+    prefix,
+    cfg,
+    use
+)
+    local ok, frames, err =
+        pcall(
+            decodeGif,
+            body,
+            cfg
+        )
+
     if not ok then
         err = frames
         frames = nil
     end
+
     if not frames then
-        warn(TAG .. "couldn't turn that gif into frames: " .. tostring(err))
+        warn(
+            TAG
+            .. "couldn't turn that gif into frames: "
+            .. tostring(err)
+        )
+
         return nil
     end
-    local assets, paths, totalDelay = {}, {}, 0
+
+    local assets = {}
+    local paths = {}
+    local totalDelay = 0
+
     for i, f in ipairs(frames) do
-        local p = ("%s_g%03d.png"):format(prefix, i)
-        pcall(writefile, p, f.png)
-        local a = use(p)
+        local p =
+            ("%s_g%03d.png"):format(
+                prefix,
+                i
+            )
+
+        pcall(
+            writefile,
+            p,
+            f.png
+        )
+
+        local a =
+            use(p)
+
         if not a then
-            warn(TAG .. "getcustomasset failed for gif frame " .. p)
+            warn(
+                TAG
+                .. "getcustomasset failed for gif frame "
+                .. p
+            )
+
             return nil
         end
+
         assets[i] = a
+
         paths[#paths + 1] = p
+
         totalDelay += f.delay
     end
-    local avg = totalDelay / #frames
-    local manifest = prefix .. "_gif.txt"
-    pcall(writefile, manifest, ("%d,%.3f"):format(#frames, avg))
-    paths[#paths + 1] = manifest
-    info(cfg, ("gif split into %d frames. its own speed is ~%.3fs per frame, set your frame switch speed to about that")
-        :format(#frames, avg))
+
+    local avg =
+        totalDelay / #frames
+
+    local manifest =
+        prefix .. "_gif.txt"
+
+    pcall(
+        writefile,
+        manifest,
+        (
+            "%d,%.3f"
+        ):format(
+            #frames,
+            avg
+        )
+    )
+
+    paths[#paths + 1] =
+        manifest
+
+    info(
+        cfg,
+        (
+            "gif split into %d frames. "
+            .. "its own speed is ~%.3fs per frame"
+        ):format(
+            #frames,
+            avg
+        )
+    )
+
     return assets, paths
 end
 
-local function findCached(prefix, kind)
-    local list = (kind == "audio") and AUDIO_EXTS or IMAGE_EXTS
+-- ============================================================
+-- CACHE / DOWNLOAD
+-- ============================================================
+
+local function findCached(
+    prefix,
+    kind
+)
+    local list =
+        kind == "audio"
+        and AUDIO_EXTS
+        or IMAGE_EXTS
+
     for _, e in ipairs(list) do
-        local p = prefix .. "." .. e
-        if isfile(p) then return p end
+        local p =
+            prefix .. "." .. e
+
+        if isfile(p) then
+            return p
+        end
     end
+
     return nil
 end
 
--- one download with retries. returns body, ext  (or nil, reason)
-local function download(url, kind, cfg, isAlt)
-    local attempts = math.max(math.floor(cfg.DownloadRetries), 0) + 1
-    local reason = "unknown error"
+local function download(
+    url,
+    kind,
+    cfg,
+    isAlt
+)
+    local attempts =
+        math.max(
+            math.floor(
+                cfg.DownloadRetries
+            ),
+            0
+        ) + 1
+
+    local reason =
+        "unknown error"
+
     for attempt = 1, attempts do
-        local ok, res = pcall(request, {Url = url, Method = "GET", Headers = HEADERS})
-        if ok and type(res) == "table" then
+        local ok, res =
+            pcall(
+                request,
+                {
+                    Url = url,
+                    Method = "GET",
+                    Headers = HEADERS,
+                }
+            )
+
+        if ok
+            and type(res) == "table"
+        then
             local body = res.Body
-            local status = tostring(res.StatusCode or "?")
+
+            local status =
+                tostring(
+                    res.StatusCode
+                    or "?"
+                )
+
             if body and #body > 0 then
-                local ext = sniff(body)
-                if ext and good(kind, ext, cfg) then return body, ext end
+                local ext =
+                    sniff(body)
+
+                if ext
+                    and good(
+                        kind,
+                        ext,
+                        cfg
+                    )
+                then
+                    return body, ext
+                end
+
                 if ext then
-                    -- wrong format. for wiki links, ask the cdn for the original png first
                     if not isAlt then
-                        local alt = wikiOriginal(url)
+                        local alt =
+                            wikiOriginal(url)
+
                         if alt then
-                            local b2, e2 = download(alt, kind, cfg, true)
-                            if b2 and good(kind, e2, cfg) then return b2, e2 end
+                            local b2, e2 =
+                                download(
+                                    alt,
+                                    kind,
+                                    cfg,
+                                    true
+                                )
+
+                            if b2
+                                and good(
+                                    kind,
+                                    e2,
+                                    cfg
+                                )
+                            then
+                                return b2, e2
+                            end
                         end
                     end
-                    -- still not a supported format: use it anyway if allowed
-                    if tolerated(kind, ext, cfg) then return body, ext end
-                    -- permanent problem, retrying won't help
-                    return nil, ("link served a %s file, roblox can't use that here. use png/jpg (or mp3/ogg)")
-                        :format(ext:upper())
+
+                    if tolerated(
+                        kind,
+                        ext,
+                        cfg
+                    ) then
+                        return body, ext
+                    end
+
+                    return nil,
+                        (
+                            "link served a %s file, "
+                            .. "roblox can't use that here"
+                        ):format(
+                            ext:upper()
+                        )
                 end
-                local preview = (body:sub(1, 40):gsub("%c+", " "))
-                reason = ("HTTP %s, %d bytes, not an image/audio file, starts with %q")
-                    :format(status, #body, preview)
-                local code = tonumber(res.StatusCode)
-                -- client errors (403/404...) won't fix themselves, except 429
-                if code and code >= 400 and code < 500 and code ~= 429 then break end
+
+                local preview =
+                    body:sub(
+                        1,
+                        40
+                    ):gsub(
+                        "%c+",
+                        " "
+                    )
+
+                reason =
+                    (
+                        "HTTP %s, %d bytes, "
+                        .. "not an image/audio file, starts with %q"
+                    ):format(
+                        status,
+                        #body,
+                        preview
+                    )
+
+                local code =
+                    tonumber(
+                        res.StatusCode
+                    )
+
+                if code
+                    and code >= 400
+                    and code < 500
+                    and code ~= 429
+                then
+                    break
+                end
             else
-                reason = ("HTTP %s, empty body"):format(status)
+                reason =
+                    (
+                        "HTTP %s, empty body"
+                    ):format(
+                        status
+                    )
             end
         else
-            reason = "request error: " .. tostring(res)
+            reason =
+                "request error: "
+                .. tostring(res)
         end
-        if attempt < attempts then task.wait(0.4 * attempt) end
+
+        if attempt < attempts then
+            task.wait(
+                0.4 * attempt
+            )
+        end
     end
+
     return nil, reason
 end
 
--- downloads (or reuses cached) a link. returns an ARRAY of getcustomasset strings
--- (one entry normally, many for a gif) plus an array of the files used. nil on failure
-local function fetch(url, kind, cfg)
-    if not (request and writefile and isfile and customAsset) then
-        warn(TAG .. "executor can't download links (missing request/writefile/getcustomasset): " .. url)
+local function fetch(
+    url,
+    kind,
+    cfg
+)
+    if not (
+        request
+        and writefile
+        and isfile
+        and customAsset
+    ) then
+        warn(
+            TAG
+            .. "executor can't download links: "
+            .. url
+        )
+
         return nil
     end
-    if makefolder and isfolder and not isfolder(CACHE_DIR) then pcall(makefolder, CACHE_DIR) end
-    local base = (isfolder and isfolder(CACHE_DIR)) and (CACHE_DIR .. "/") or ""
 
-    local safeName = tostring(cfg.SkinName or "Skin"):gsub("[^%w_%-]", "_")
-    -- the url hash is in the filename, so changing a link automatically downloads fresh
-    local prefix = ("%s%s_%s"):format(base, safeName, hash(url))
+    if makefolder
+        and isfolder
+        and not isfolder(
+            CACHE_DIR
+        )
+    then
+        pcall(
+            makefolder,
+            CACHE_DIR
+        )
+    end
+
+    local base =
+        (
+            isfolder
+            and isfolder(CACHE_DIR)
+        )
+        and (
+            CACHE_DIR .. "/"
+        )
+        or ""
+
+    local safeName =
+        tostring(
+            cfg.SkinName
+            or "Skin"
+        ):gsub(
+            "[^%w_%-]",
+            "_"
+        )
+
+    local prefix =
+        (
+            "%s%s_%s"
+        ):format(
+            base,
+            safeName,
+            hash(url)
+        )
 
     local function use(path)
-        local ok, asset = pcall(customAsset, path)
-        if ok and asset then return asset end
+        local ok, asset =
+            pcall(
+                customAsset,
+                path
+            )
+
+        if ok and asset then
+            return asset
+        end
+
         return nil
     end
 
     if not cfg.ForceRedownload then
-        -- a gif we already split into png frames on an earlier run?
-        local manifest = prefix .. "_gif.txt"
-        if kind == "image" and readfile and isfile(manifest) then
-            local okr, txt = pcall(readfile, manifest)
-            local count, avg = tostring(okr and txt or ""):match("^(%d+),([%d%.]+)")
-            count = tonumber(count)
-            if count and count > 0 then
-                local assets, paths = {}, {manifest}
+        local manifest =
+            prefix
+            .. "_gif.txt"
+
+        if kind == "image"
+            and readfile
+            and isfile(manifest)
+        then
+            local okr, txt =
+                pcall(
+                    readfile,
+                    manifest
+                )
+
+            local count, avg =
+                tostring(
+                    okr and txt
+                    or ""
+                ):match(
+                    "^(%d+),([%d%.]+)"
+                )
+
+            count =
+                tonumber(count)
+
+            if count
+                and count > 0
+            then
+                local assets = {}
+                local paths = {
+                    manifest,
+                }
+
                 for i = 1, count do
-                    local p = ("%s_g%03d.png"):format(prefix, i)
-                    local a = isfile(p) and use(p) or nil
-                    if not a then assets = nil break end
+                    local p =
+                        (
+                            "%s_g%03d.png"
+                        ):format(
+                            prefix,
+                            i
+                        )
+
+                    local a =
+                        isfile(p)
+                        and use(p)
+                        or nil
+
+                    if not a then
+                        assets = nil
+                        break
+                    end
+
                     assets[i] = a
                     paths[#paths + 1] = p
                 end
+
                 if assets then
-                    info(cfg, ("gif (cached): %d frames, its own speed is ~%ss per frame"):format(count, avg))
+                    info(
+                        cfg,
+                        (
+                            "gif (cached): %d frames, "
+                            .. "its own speed is ~%ss per frame"
+                        ):format(
+                            count,
+                            avg
+                        )
+                    )
+
                     return assets, paths
                 end
             end
         end
 
-        local cached = findCached(prefix, kind)
+        local cached =
+            findCached(
+                prefix,
+                kind
+            )
+
         if cached then
-            local asset = use(cached)
-            if asset then return {asset}, {cached} end
-            -- cached file is corrupt: delete it and download again
-            if delfile then pcall(delfile, cached) end
-        end
-    end
+            local asset =
+                use(cached)
 
-    local body, extOrReason = download(url, kind, cfg)
-    if not body then
-        warn(("%sdownload failed (%s): %s"):format(TAG, tostring(extOrReason), url))
-        return nil
-    end
+            if asset then
+                return {
+                    asset,
+                }, {
+                    cached,
+                }
+            end
 
-    if extOrReason == "gif" and kind == "image" and cfg.ConvertGifs then
-        return convertGif(body, prefix, cfg, use)
-    end
-
-    if extOrReason == "webp" or extOrReason == "gif" then
-        warn(("%sthis link only gives a %s file. roblox may not draw it (blank sprite). if it's blank, re-host it as png/jpg: %s")
-            :format(TAG, extOrReason:upper(), url))
-    end
-    local path = prefix .. "." .. extOrReason
-    pcall(writefile, path, body)
-    local asset = use(path)
-    if not asset then
-        warn(TAG .. "getcustomasset failed for " .. path)
-        return nil
-    end
-    return {asset}, {path}
-end
-
--- resolves every source in parallel; returns map src -> ARRAY of usable assets (or false), plus file paths
-local function resolveAll(entries, cfg)
-    local out, paths, pending = {}, {}, 0
-    for _, e in ipairs(entries) do
-        local src = e.src
-        if out[src] == nil then
-            out[src] = false
-            if isRobloxAsset(src) then
-                out[src] = {src}
-            elseif isLink(src) then
-                pending += 1
-                task.spawn(function()
-                    local assets, files = fetch(src, e.kind, cfg)
-                    out[src] = assets or false
-                    if assets and files then
-                        for _, p in ipairs(files) do paths[#paths + 1] = p end
-                    end
-                    pending -= 1
-                end)
-            else
-                warn(TAG .. "can't use '" .. src .. "' (use rbxassetid://..., a number, or an http(s) link)")
+            if delfile then
+                pcall(
+                    delfile,
+                    cached
+                )
             end
         end
     end
-    local deadline = os.clock() + cfg.DownloadTimeout
-    while pending > 0 and os.clock() < deadline do task.wait(0.05) end
-    if pending > 0 then
-        warn(("%sdownloads timed out after %ds (%d unfinished). raise DownloadTimeout (big gifs take longer)"):format(
-            TAG, cfg.DownloadTimeout, pending))
+
+    local body, extOrReason =
+        download(
+            url,
+            kind,
+            cfg
+        )
+
+    if not body then
+        warn(
+            (
+                "%sdownload failed (%s): %s"
+            ):format(
+                TAG,
+                tostring(extOrReason),
+                url
+            )
+        )
+
+        return nil
     end
+
+    if extOrReason == "gif"
+        and kind == "image"
+        and cfg.ConvertGifs
+    then
+        return convertGif(
+            body,
+            prefix,
+            cfg,
+            use
+        )
+    end
+
+    if extOrReason == "webp"
+        or extOrReason == "gif"
+    then
+        warn(
+            (
+                "%sthis link only gives a %s file. "
+                .. "roblox may not draw it"
+            ):format(
+                TAG,
+                extOrReason:upper()
+            )
+        )
+    end
+
+    local path =
+        prefix
+        .. "."
+        .. extOrReason
+
+    pcall(
+        writefile,
+        path,
+        body
+    )
+
+    local asset =
+        use(path)
+
+    if not asset then
+        warn(
+            TAG
+            .. "getcustomasset failed for "
+            .. path
+        )
+
+        return nil
+    end
+
+    return {
+        asset,
+    }, {
+        path,
+    }
+end
+
+local function resolveAll(
+    entries,
+    cfg
+)
+    local out = {}
+    local paths = {}
+    local pending = 0
+
+    for _, e in ipairs(entries) do
+        local src = e.src
+
+        if out[src] == nil then
+            out[src] = false
+
+            if isRobloxAsset(src) then
+                out[src] = {
+                    src,
+                }
+
+            elseif isLink(src) then
+                pending += 1
+
+                task.spawn(function()
+                    local assets, files =
+                        fetch(
+                            src,
+                            e.kind,
+                            cfg
+                        )
+
+                    out[src] =
+                        assets
+                        or false
+
+                    if assets
+                        and files
+                    then
+                        for _, p in ipairs(files) do
+                            paths[#paths + 1] = p
+                        end
+                    end
+
+                    pending -= 1
+                end)
+
+            else
+                warn(
+                    TAG
+                    .. "can't use '"
+                    .. src
+                    .. "'"
+                )
+            end
+        end
+    end
+
+    local deadline =
+        os.clock()
+        + cfg.DownloadTimeout
+
+    while pending > 0
+        and os.clock() < deadline
+    do
+        task.wait(0.05)
+    end
+
+    if pending > 0 then
+        warn(
+            (
+                "%sdownloads timed out after %ds (%d unfinished)"
+            ):format(
+                TAG,
+                cfg.DownloadTimeout,
+                pending
+            )
+        )
+    end
+
     return out, paths
 end
 
+-- ============================================================
+-- FRAME HELPERS
+-- ============================================================
+
 local function toList(v)
-    if v == nil then return {} end
-    if type(v) ~= "table" then return {v} end
+    if v == nil then
+        return {}
+    end
+
+    if type(v) ~= "table" then
+        return {
+            v,
+        }
+    end
+
     return v
 end
 
--- frame picker. cycle = ping-pong (1,2,3,2,1,2,3...) so no frame ever shows twice in a row
-local function pickFrame(frames, t, speed, cycle)
+local function pickFrame(
+    frames,
+    t,
+    speed,
+    cycle
+)
     local n = #frames
-    if n == 1 then return frames[1] end
-    local step = math.floor(t / math.max(speed, 0.01))
-    local idx
-    if cycle and n > 2 then
-        local period = 2 * n - 2
-        local p = step % period
-        idx = (p < n) and (p + 1) or (period - p + 1)
-    else
-        idx = (step % n) + 1
+
+    if n == 1 then
+        return frames[1]
     end
+
+    local step =
+        math.floor(
+            t / math.max(
+                speed,
+                0.01
+            )
+        )
+
+    local idx
+
+    if cycle and n > 2 then
+        local period =
+            2 * n - 2
+
+        local p =
+            step % period
+
+        idx =
+            (
+                p < n
+                and (p + 1)
+                or (period - p + 1)
+            )
+    else
+        idx =
+            (step % n) + 1
+    end
+
     return frames[idx]
 end
 
 local function mulColor(a, b)
-    return Color3.new(a.R * b.R, a.G * b.G, a.B * b.B)
+    return Color3.new(
+        a.R * b.R,
+        a.G * b.G,
+        a.B * b.B
+    )
 end
 
--- removes the current skin (if any)
+-- ============================================================
+-- STOP
+-- ============================================================
+
 function Brain.Stop()
     if env.__SkinBrainCleanup then
-        pcall(env.__SkinBrainCleanup)
+        pcall(
+            env.__SkinBrainCleanup
+        )
+
         env.__SkinBrainCleanup = nil
     end
 end
 
--- --- RUN ---
+-- ============================================================
+-- RUN
+-- ============================================================
+
 function Brain.Run(userCfg)
-    Brain.Stop() -- re-execute guard
+    Brain.Stop()
 
-    local cfg = buildConfig(userCfg)
-    local plr = Players.LocalPlayer
-    local char = plr.Character or plr.CharacterAdded:Wait()
-    local root = char:WaitForChild("HumanoidRootPart")
-    local humanoid = char:WaitForChild("Humanoid")
+    local cfg =
+        buildConfig(userCfg)
 
-    -- collect + resolve all sources
+    local plr =
+        Players.LocalPlayer
+
+    local char =
+        plr.Character
+        or plr.CharacterAdded:Wait()
+
+    local root =
+        char:WaitForChild(
+            "HumanoidRootPart"
+        )
+
+    local humanoid =
+        char:WaitForChild(
+            "Humanoid"
+        )
+
+    -- ========================================================
+    -- COLLECT SOURCES
+    -- ========================================================
+
     local entries = {}
-    local function collect(list, kind)
+
+    local function collect(
+        list,
+        kind
+    )
         local res = {}
-        for _, s in ipairs(toList(list)) do
-            local n = normalize(s)
+
+        for _, s in ipairs(
+            toList(list)
+        ) do
+            local n =
+                normalize(s)
+
             if n then
                 res[#res + 1] = n
-                entries[#entries + 1] = {src = n, kind = kind}
+
+                entries[#entries + 1] = {
+                    src = n,
+                    kind = kind,
+                }
             end
         end
+
         return res
     end
-    local idleSrc = collect(cfg.Idle, "image")
-    local walkSrc = collect(cfg.Walk, "image")
-    local theme = cfg.ThemeSound
-    local themeSrc = type(theme) == "table" and normalize(theme.Id) or nil
-    if themeSrc then entries[#entries + 1] = {src = themeSrc, kind = "audio"} end
 
-    local resolved, downloadedPaths = resolveAll(entries, cfg)
+    local idleSrc =
+        collect(
+            cfg.Idle,
+            "image"
+        )
 
-    -- deletes the files this run downloaded/used (only if DeleteDownloadsOnRemove is on)
+    local walkSrc =
+        collect(
+            cfg.Walk,
+            "image"
+        )
+
+    local theme =
+        cfg.ThemeSound
+
+    local themeSrc =
+        type(theme) == "table"
+        and normalize(theme.Id)
+        or nil
+
+    if themeSrc then
+        entries[#entries + 1] = {
+            src = themeSrc,
+            kind = "audio",
+        }
+    end
+
+    local resolved,
+        downloadedPaths =
+        resolveAll(
+            entries,
+            cfg
+        )
+
     local function wipeDownloads()
-        if cfg.DeleteDownloadsOnRemove and delfile then
-            for _, p in ipairs(downloadedPaths) do pcall(delfile, p) end
+        if cfg.DeleteDownloadsOnRemove
+            and delfile
+        then
+            for _, p in ipairs(
+                downloadedPaths
+            ) do
+                pcall(
+                    delfile,
+                    p
+                )
+            end
         end
     end
 
     local function frames(srcList)
         local out = {}
-        for _, s in ipairs(srcList) do
-            local r = resolved[s]
+
+        for _, s in ipairs(
+            srcList
+        ) do
+            local r =
+                resolved[s]
+
             if r then
-                for _, a in ipairs(r) do out[#out + 1] = a end
+                for _, a in ipairs(r) do
+                    out[#out + 1] = a
+                end
             end
         end
+
         return out
     end
-    local idle, walk = frames(idleSrc), frames(walkSrc)
-    if #idle == 0 and #walk > 0 then idle = {walk[1]} end
-    if #walk == 0 then walk = idle end
-    info(cfg, ("loaded '%s': %d idle frame(s), %d walk frame(s)"):format(
-        cfg.SkinName, #frames(idleSrc), #frames(walkSrc)))
+
+    local idle =
+        frames(idleSrc)
+
+    local walk =
+        frames(walkSrc)
+
+    if #idle == 0
+        and #walk > 0
+    then
+        idle = {
+            walk[1],
+        }
+    end
+
+    if #walk == 0 then
+        walk = idle
+    end
+
+    info(
+        cfg,
+        (
+            "loaded '%s': %d idle frame(s), %d walk frame(s)"
+        ):format(
+            cfg.SkinName,
+            #idle,
+            #walk
+        )
+    )
+
     if #idle == 0 then
-        warn(TAG .. "no usable sprites loaded, nothing to show")
+        warn(
+            TAG
+            .. "no usable sprites loaded, nothing to show"
+        )
+
         wipeDownloads()
         return nil
     end
+
     if not char:IsDescendantOf(game) then
         wipeDownloads()
         return nil
     end
 
+    -- ========================================================
+    -- STATE
+    -- ========================================================
+
     local alive = true
-    local conns, sounds = {}, {}
+    local conns = {}
+    local sounds = {}
+
+    -- ========================================================
+    -- REMOVE OLD BILLBOARDS
+    -- ========================================================
 
     if cfg.RemoveOtherBillboards then
-        for _, d in ipairs(char:GetDescendants()) do
-            if d:IsA("BillboardGui") then d:Destroy() end
-        end
-    end
-
-    -- billboard + sprite
-    local gui = Instance.new("BillboardGui")
-    gui.Name = "SkinBrainBillboard"
-    gui.ResetOnSpawn = false
-    gui.AlwaysOnTop = cfg.AlwaysOnTop
-    gui.LightInfluence = cfg.LightInfluence
-    gui.Size = UDim2.new(cfg.sizeX, 0, cfg.sizeY, 0)
-    gui.StudsOffset = Vector3.new(0, cfg.studsOffsetY, 0)
-    gui.Parent = root
-
-    local sprite = Instance.new("ImageLabel")
-    sprite.Name = "Sprite"
-    sprite.AnchorPoint = Vector2.new(0.5, 1)   -- bottom edge stays put when squashing
-    sprite.Position = UDim2.new(0.5, 0, 1, 0)
-    sprite.Size = UDim2.new(1, 0, 1, 0)
-    sprite.BackgroundTransparency = 1
-    sprite.ImageColor3 = cfg.Tint
-    sprite.ImageTransparency = cfg.Transparency
-    if cfg.PixelArt then sprite.ResampleMode = Enum.ResamplerMode.Pixelated end
-    sprite.ZIndex = 2
-    sprite.Image = idle[1]
-    sprite.Parent = gui
-
-    -- preload (non-blocking: some executors hang PreloadAsync on custom files)
-    local preloadFolder = Instance.new("Folder")
-    preloadFolder.Name = "Preload"
-    preloadFolder.Parent = gui
-    local labels, seen = {}, {}
-    for _, set in ipairs({idle, walk}) do
-        for _, id in ipairs(set) do
-            if not seen[id] then
-                seen[id] = true
-                local lbl = Instance.new("ImageLabel")
-                lbl.Size = UDim2.new(0, 1, 0, 1)
-                lbl.Image = id
-                lbl.ImageTransparency = 0.99
-                lbl.BackgroundTransparency = 1
-                lbl.Parent = preloadFolder
-                labels[#labels + 1] = lbl
+        for _, d in ipairs(
+            char:GetDescendants()
+        ) do
+            if d:IsA("BillboardGui") then
+                d:Destroy()
             end
         end
     end
-    do
-        local finished = false
-        task.spawn(function()
-            pcall(ContentProvider.PreloadAsync, ContentProvider, labels)
-            finished = true
-        end)
-        local t0 = os.clock()
-        while not finished and os.clock() - t0 < 2 do task.wait(0.05) end
+
+    -- ========================================================
+    -- MAIN BILLBOARD
+    -- ========================================================
+
+    local gui =
+        Instance.new("BillboardGui")
+
+    gui.Name =
+        "SkinBrainBillboard"
+
+    gui.ResetOnSpawn = false
+
+    gui.AlwaysOnTop =
+        cfg.AlwaysOnTop
+
+    gui.LightInfluence =
+        cfg.LightInfluence
+
+    gui.Size =
+        UDim2.new(
+            cfg.sizeX,
+            0,
+            cfg.sizeY,
+            0
+        )
+
+    gui.StudsOffset =
+        Vector3.new(
+            0,
+            cfg.studsOffsetY,
+            0
+        )
+
+    gui.Parent = root
+
+    -- ========================================================
+    -- AFTERIMAGE LAYER
+    -- ========================================================
+
+    local afterimageLayer
+
+    if cfg.AfterimageEffect then
+        afterimageLayer =
+            Instance.new("Frame")
+
+        afterimageLayer.Name =
+            "AfterimageLayer"
+
+        afterimageLayer.AnchorPoint =
+            Vector2.new(0.5, 1)
+
+        afterimageLayer.Position =
+            UDim2.new(
+                0.5,
+                0,
+                1,
+                0
+            )
+
+        afterimageLayer.Size =
+            UDim2.new(
+                1,
+                0,
+                1,
+                0
+            )
+
+        afterimageLayer.BackgroundTransparency =
+            1
+
+        afterimageLayer.BorderSizePixel =
+            0
+
+        afterimageLayer.ZIndex =
+            cfg.AfterimageZIndex
+
+        afterimageLayer.Parent =
+            gui
     end
 
-    -- player might have reset while we were loading
-    if not char:IsDescendantOf(game) or humanoid.Health <= 0 then
+    -- ========================================================
+    -- MAIN SPRITE
+    -- ========================================================
+
+    local sprite =
+        Instance.new("ImageLabel")
+
+    sprite.Name =
+        "Sprite"
+
+    sprite.AnchorPoint =
+        Vector2.new(
+            0.5,
+            1
+        )
+
+    sprite.Position =
+        UDim2.new(
+            0.5,
+            0,
+            1,
+            0
+        )
+
+    sprite.Size =
+        UDim2.new(
+            1,
+            0,
+            1,
+            0
+        )
+
+    sprite.BackgroundTransparency =
+        1
+
+    sprite.ImageColor3 =
+        cfg.Tint
+
+    sprite.ImageTransparency =
+        cfg.Transparency
+
+    if cfg.PixelArt then
+        sprite.ResampleMode =
+            Enum.ResamplerMode.Pixelated
+    end
+
+    sprite.ZIndex =
+        cfg.SpriteZIndex
+
+    sprite.Image =
+        idle[1]
+
+    sprite.Parent =
+        gui
+
+    -- ========================================================
+    -- PRELOAD
+    -- ========================================================
+
+    local preloadFolder =
+        Instance.new("Folder")
+
+    preloadFolder.Name =
+        "Preload"
+
+    preloadFolder.Parent =
+        gui
+
+    local labels = {}
+    local seen = {}
+
+    for _, set in ipairs({
+        idle,
+        walk,
+    }) do
+        for _, id in ipairs(set) do
+            if not seen[id] then
+                seen[id] = true
+
+                local lbl =
+                    Instance.new("ImageLabel")
+
+                lbl.Size =
+                    UDim2.new(
+                        0,
+                        1,
+                        0,
+                        1
+                    )
+
+                lbl.Image = id
+                lbl.ImageTransparency = 0.99
+                lbl.BackgroundTransparency = 1
+
+                lbl.Parent =
+                    preloadFolder
+
+                labels[#labels + 1] =
+                    lbl
+            end
+        end
+    end
+
+    do
+        local finished = false
+
+        task.spawn(function()
+            pcall(
+                ContentProvider.PreloadAsync,
+                ContentProvider,
+                labels
+            )
+
+            finished = true
+        end)
+
+        local t0 =
+            os.clock()
+
+        while not finished
+            and os.clock() - t0 < 2
+        do
+            task.wait(0.05)
+        end
+    end
+
+    if not char:IsDescendantOf(game)
+        or humanoid.Health <= 0
+    then
         gui:Destroy()
         wipeDownloads()
         return nil
     end
 
-    -- afterimages (real ParticleEmitters).
-    -- a particle can't change texture after it's emitted, so there is one emitter per sprite frame
-    -- and we fire the one that matches the frame you're currently showing
-    local trailHolder, trailPart
-    local emitters, emitTimes = {}, {}
-    local currentColor = cfg.Tint
-    local hoverOffset = 0
+    -- ========================================================
+    -- UI AFTERIMAGE STATE
+    -- ========================================================
 
-    if cfg.AfterimageEffect then
-        trailHolder = Instance.new("Folder")
-        trailHolder.Name = "SkinBrainTrails"
-        trailHolder.Parent = workspace
+    local ghosts = {}
 
-        trailPart = Instance.new("Part")
-        trailPart.Name = "TrailAnchor"
-        trailPart.Size = Vector3.new(0.2, 0.2, 0.2)
-        trailPart.Transparency = 1
-        trailPart.Anchored = true
-        trailPart.CanCollide = false
-        trailPart.CanQuery = false
-        trailPart.CanTouch = false
-        trailPart.CFrame = root.CFrame
-        trailPart.Parent = trailHolder
+    local lastGhostPosition =
+        Vector2.new(0, 0)
 
-        local attach = Instance.new("Attachment")
-        attach.Parent = trailPart
+    local function destroyGhost(ghost)
+        if ghost and ghost.label then
+            ghost.label:Destroy()
+        end
+    end
 
-        -- particles are square; Squash stretches them to your sprite's proportions
-        -- (exact for square sprites like 8x8, best-effort for tall/wide ones)
-        local aspect = cfg.sizeY / math.max(cfg.sizeX, 0.01)
-        local squash = (aspect - 1) / (aspect + 1)
-        local baseSize = cfg.sizeX / math.max(1 - squash, 0.013) * cfg.AfterimageSizeScale
-        local endSize = baseSize * (0.02 + cfg.AfterimageGrow)
-        local sizeEnv = cfg.AfterimageDistort and baseSize * 0.015 or 0
-        local squashEnv = cfg.AfterimageDistort and 0.01 or 0
+    local function cleanupGhosts()
+        for i = #ghosts, 1, -1 do
+            destroyGhost(
+                ghosts[i]
+            )
 
-        for _, set in ipairs({idle, walk}) do
-            for _, id in ipairs(set) do
-                if not emitters[id] then
-                    local em = Instance.new("ParticleEmitter")
-                    em.Texture = id
-                    em.Rate = 0 -- we emit by hand
-                    em.Enabled = true
-                    em.Speed = NumberRange.new(0)
-                    em.SpreadAngle = Vector2.new(0, 0)
-                    em.Acceleration = Vector3.new(0, 0, 0)
-                    em.Drag = 0
-                    em.Rotation = NumberRange.new(0)
-                    em.RotSpeed = NumberRange.new(0)
-                    em.LockedToPart = false -- ghosts stay where they were emitted
-                    em.Orientation = Enum.ParticleOrientation.FacingCamera
-                    em.LightEmission = cfg.AfterimageLightEmission
-                    em.LightInfluence = cfg.LightInfluence
-                    em.Lifetime = NumberRange.new(cfg.AfterimageFadeTime)
-                    em.Color = ColorSequence.new(currentColor)
-                    em.Transparency = NumberSequence.new(cfg.AfterimageTransparency, 1)
-                    em.Size = NumberSequence.new({
-                        NumberSequenceKeypoint.new(0, baseSize, sizeEnv),
-                        NumberSequenceKeypoint.new(0.1, endSize, sizeEnv),
-                    })
-                    em.Squash = NumberSequence.new({
-                        NumberSequenceKeypoint.new(0, squash, squashEnv),
-                        NumberSequenceKeypoint.new(0.1, squash, squashEnv),
-                    })
-                    em.Parent = attach
-                    emitters[id] = em
-                end
+            table.remove(
+                ghosts,
+                i
+            )
+        end
+    end
+
+    local function createGhost(
+        texture,
+        moving,
+        basePosition,
+        baseSize,
+        color
+    )
+        if not afterimageLayer then
+            return
+        end
+
+        if cfg.AfterimageMax <= 0 then
+            return
+        end
+
+        -- remove oldest ghosts first
+        while #ghosts >=
+            cfg.AfterimageMax
+        do
+            local old =
+                table.remove(
+                    ghosts,
+                    1
+                )
+
+            destroyGhost(old)
+        end
+
+        local label =
+            Instance.new("ImageLabel")
+
+        label.Name =
+            "Afterimage"
+
+        label.BackgroundTransparency =
+            1
+
+        label.BorderSizePixel =
+            0
+
+        label.Image =
+            texture
+
+        label.ImageColor3 =
+            color
+
+        label.ImageTransparency =
+            math.clamp(
+                cfg.AfterimageTransparency,
+                0,
+                1
+            )
+
+        label.AnchorPoint =
+            Vector2.new(
+                0.5,
+                1
+            )
+
+        label.ZIndex =
+            cfg.AfterimageZIndex
+
+        local scale =
+            cfg.AfterimageSizeScale
+
+        local grow =
+            cfg.AfterimageGrow
+
+        local startX =
+            basePosition.X
+            + cfg.AfterimageOffsetX
+
+        local startY =
+            basePosition.Y
+            + cfg.AfterimageOffsetY
+
+        -- subtle visual movement direction
+        if moving then
+            local velocity =
+                humanoid.MoveDirection
+
+            startX -=
+                velocity.X
+                * cfg.AfterimageOffsetX
+
+            startY +=
+                velocity.Z
+                * cfg.AfterimageOffsetY
+        end
+
+        label.Position =
+            UDim2.new(
+                startX,
+                0,
+                startY,
+                0
+            )
+
+        label.Size =
+            UDim2.new(
+                baseSize.X * scale,
+                0,
+                baseSize.Y * scale,
+                0
+            )
+
+        label.Rotation =
+            cfg.AfterimageDistort
+            and (math.random() * 2 - 1) * 2
+            or 0
+
+        label.Parent =
+            afterimageLayer
+
+        local ghost = {
+            label = label,
+            born = os.clock(),
+            life = cfg.AfterimageFadeTime
+                * (moving and 1 or 1.33),
+
+            startTransparency =
+                math.clamp(
+                    cfg.AfterimageTransparency,
+                    0,
+                    1
+                ),
+
+            startSize =
+                Vector2.new(
+                    baseSize.X * scale,
+                    baseSize.Y * scale
+                ),
+
+            grow =
+                grow,
+
+            baseX =
+                startX,
+
+            baseY =
+                startY,
+        }
+
+        ghosts[#ghosts + 1] =
+            ghost
+    end
+
+    local function updateGhosts(now)
+        for i = #ghosts, 1, -1 do
+            local ghost =
+                ghosts[i]
+
+            local label =
+                ghost.label
+
+            if not label
+                or not label.Parent
+            then
+                table.remove(
+                    ghosts,
+                    i
+                )
+
+                continue
+            end
+
+            local age =
+                now - ghost.born
+
+            local alpha =
+                math.clamp(
+                    age / math.max(
+                        ghost.life,
+                        0.01
+                    ),
+                    0,
+                    1
+                )
+
+            if alpha >= 1 then
+                label:Destroy()
+
+                table.remove(
+                    ghosts,
+                    i
+                )
+
+                continue
+            end
+
+            -- fade
+            label.ImageTransparency =
+                ghost.startTransparency
+                + (
+                    1
+                    - ghost.startTransparency
+                ) * alpha
+
+            -- grow
+            local growth =
+                1
+                + ghost.grow * alpha
+
+            label.Size =
+                UDim2.new(
+                    0,
+                    ghost.startSize.X * growth,
+                    0,
+                    ghost.startSize.Y * growth
+                )
+
+            -- optional tiny UI distortion
+            if cfg.AfterimageDistort then
+                local wave =
+                    math.sin(
+                        now * 12
+                        + i
+                    )
+
+                label.Rotation =
+                    wave * 2
             end
         end
     end
 
-    local function spawnAfterimage(texture, moving)
-        local em = emitters[texture]
-        if not em then return end
+    -- ========================================================
+    -- HIDE CHARACTER
+    -- ========================================================
 
-        local now = os.clock()
-        local life = cfg.AfterimageFadeTime * (moving and 1 or 1.33)
-
-        -- cap how many ghosts are alive at once
-        while emitTimes[1] and emitTimes[1] < now - cfg.AfterimageFadeTime * 1.33 do
-            table.remove(emitTimes, 1)
-        end
-        if #emitTimes >= cfg.AfterimageMax then return end
-        emitTimes[#emitTimes + 1] = now
-
-        -- spawn at the sprite's center, nudged slightly away from the camera so ghosts sit behind it
-        local cam = workspace.CurrentCamera
-        local back = cam and cam.CFrame.LookVector * 0.4 or Vector3.new(0, 0, 0)
-        trailPart.CFrame = CFrame.new(root.Position + Vector3.new(0, cfg.studsOffsetY + hoverOffset, 0) + back)
-
-        em.Lifetime = NumberRange.new(life)
-        if cfg.RainbowKeyframeColor then em.Color = ColorSequence.new(currentColor) end
-        em:Emit(1)
-    end
-
-    -- hide the real character (optional)
     local hiddenParts = {}
+
     if cfg.HideCharacter then
         local function track(d)
-            if d:IsA("BasePart") then hiddenParts[#hiddenParts + 1] = d end
+            if d:IsA("BasePart") then
+                hiddenParts[#hiddenParts + 1] =
+                    d
+            end
         end
-        for _, d in ipairs(char:GetDescendants()) do track(d) end
-        conns[#conns + 1] = char.DescendantAdded:Connect(track)
+
+        for _, d in ipairs(
+            char:GetDescendants()
+        ) do
+            track(d)
+        end
+
+        conns[#conns + 1] =
+            char.DescendantAdded:Connect(
+                track
+            )
     end
 
-    -- hide the overhead name/health bar (optional)
+    -- ========================================================
+    -- NAME TAG
+    -- ========================================================
+
     local oldDisplayType
+
     if cfg.HideNameTag then
-        oldDisplayType = humanoid.DisplayDistanceType
-        humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+        oldDisplayType =
+            humanoid.DisplayDistanceType
+
+        humanoid.DisplayDistanceType =
+            Enum.HumanoidDisplayDistanceType.None
     end
 
-    -- theme sound (optional)
-    if themeSrc and resolved[themeSrc] then
-        local s = Instance.new("Sound")
-        s.Name = "SkinBrainTheme"
-        s.SoundId = resolved[themeSrc][1]
-        s.Volume = theme.Volume or 1
-        s.Looped = true -- always loops until you reset/respawn
-        s.PlaybackSpeed = theme.PlaybackSpeed or 1
-        if theme.RollOffMaxDistance then s.RollOffMaxDistance = theme.RollOffMaxDistance end
-        s.Parent = root
-        sounds[#sounds + 1] = s
+    -- ========================================================
+    -- THEME SOUND
+    -- ========================================================
+
+    if themeSrc
+        and resolved[themeSrc]
+    then
+        local s =
+            Instance.new("Sound")
+
+        s.Name =
+            "SkinBrainTheme"
+
+        s.SoundId =
+            resolved[themeSrc][1]
+
+        s.Volume =
+            theme.Volume
+            or 1
+
+        s.Looped = true
+
+        s.PlaybackSpeed =
+            theme.PlaybackSpeed
+            or 1
+
+        if theme.RollOffMaxDistance then
+            s.RollOffMaxDistance =
+                theme.RollOffMaxDistance
+        end
+
+        s.Parent =
+            root
+
+        sounds[#sounds + 1] =
+            s
+
         s:Play()
 
-        -- watchdog: if anything stops/pauses it, start it again
         task.spawn(function()
-            while alive and s.Parent do
+            while alive
+                and s.Parent
+            do
                 s.Looped = true
-                if not s.Playing then s:Play() end
+
+                if not s.Playing then
+                    s:Play()
+                end
+
                 task.wait(1)
             end
         end)
     end
 
-    -- PointLight modifier (optional). looks in your Head first, then anywhere in the character,
-    -- and keeps watching in case the game removes/recreates the light
-    local pl = type(cfg.PointLightModifier) == "table" and cfg.PointLightModifier or nil
-    local lightRef, lightOriginal
+    -- ========================================================
+    -- POINTLIGHT
+    -- ========================================================
+
+    local pl =
+        type(cfg.PointLightModifier)
+        == "table"
+        and cfg.PointLightModifier
+        or nil
+
+    local lightRef
+    local lightOriginal
+
     if pl and pl.Enabled then
         local function findLight()
-            local head = char:FindFirstChild("Head")
-            local light = head and head:FindFirstChildWhichIsA("PointLight")
-            return light or char:FindFirstChildWhichIsA("PointLight", true)
+            local head =
+                char:FindFirstChild(
+                    "Head"
+                )
+
+            local light =
+                head
+                and head:FindFirstChildWhichIsA(
+                    "PointLight"
+                )
+
+            return light
+                or char:FindFirstChildWhichIsA(
+                    "PointLight",
+                    true
+                )
         end
+
         task.spawn(function()
-            local deadline = os.clock() + 6
-            local light = findLight()
-            while not light and alive and os.clock() < deadline do
+            local deadline =
+                os.clock() + 6
+
+            local light =
+                findLight()
+
+            while not light
+                and alive
+                and os.clock() < deadline
+            do
                 task.wait(0.25)
-                light = findLight()
+                light =
+                    findLight()
             end
-            if not (light and alive) then
-                if alive then warn(TAG .. "PointLightModifier: no PointLight found in your character (checked Head first)") end
+
+            if not (
+                light
+                and alive
+            ) then
+                if alive then
+                    warn(
+                        TAG
+                        .. "PointLightModifier: "
+                        .. "no PointLight found"
+                    )
+                end
+
                 return
             end
+
             while alive do
-                if not (light and light.Parent) then
-                    light = findLight()
+                if not (
+                    light
+                    and light.Parent
+                ) then
+                    light =
+                        findLight()
+
                     lightRef = nil
                 end
-                if light and light ~= lightRef then
+
+                if light
+                    and light ~= lightRef
+                then
                     lightOriginal = {
-                        Color = light.Color, Brightness = light.Brightness,
-                        Range = light.Range, Enabled = light.Enabled,
+                        Color =
+                            light.Color,
+
+                        Brightness =
+                            light.Brightness,
+
+                        Range =
+                            light.Range,
+
+                        Enabled =
+                            light.Enabled,
                     }
-                    lightRef = light
+
+                    lightRef =
+                        light
                 end
+
                 task.wait(0.5)
             end
         end)
     end
 
-    -- main loop
-    local walkSpeed = cfg.WalkFrameSwitchSpeed or 0.125 -- 0.125 == math.floor(walkTime * 8) % 2
-    local walkTime, idleTime = 0, 0
-    local activeTexture = idle[1]
-    local squashY = 1
-    local glitch = {x = 0, y = 0, z = 0, rot = 0, scale = 1}
-    local nextGlitch, lastTrail = 0, 0
+    -- ========================================================
+    -- MAIN LOOP STATE
+    -- ========================================================
 
-    local transformActive = cfg.FrameJiggle or cfg.GlitchEffect or cfg.WobbleEffect
-        or cfg.HoverBob or cfg.BreathEffect or cfg.BoilEffect
-    local alphaActive = cfg.GhostPulse or cfg.FlickerEffect
-    local amp = {wobble = 0, hover = 0, breath = 0}
-    local boil = {rot = 0, x = 0, y = 0}
-    local nextBoil, flickerUntil, lastAlpha = 0, 0, -1
+    local walkSpeed =
+        cfg.WalkFrameSwitchSpeed
+        or 0.125
+
+    local walkTime = 0
+    local idleTime = 0
+
+    local activeTexture =
+        idle[1]
+
+    local squashY = 1
+
+    local glitch = {
+        x = 0,
+        y = 0,
+        z = 0,
+        rot = 0,
+        scale = 1,
+    }
+
+    local nextGlitch = 0
+    local lastTrail = 0
+
+    local transformActive =
+        cfg.FrameJiggle
+        or cfg.GlitchEffect
+        or cfg.WobbleEffect
+        or cfg.HoverBob
+        or cfg.BreathEffect
+        or cfg.BoilEffect
+
+    local alphaActive =
+        cfg.GhostPulse
+        or cfg.FlickerEffect
+
+    local amp = {
+        wobble = 0,
+        hover = 0,
+        breath = 0,
+    }
+
+    local boil = {
+        rot = 0,
+        x = 0,
+        y = 0,
+    }
+
+    local nextBoil = 0
+    local flickerUntil = 0
+    local lastAlpha = -1
+
+    local currentColor =
+        cfg.Tint
+
+    local hoverOffset = 0
+
+    -- ========================================================
+    -- STEP
+    -- ========================================================
 
     local function step(dt)
-        local now = os.clock()
-        local moving = humanoid.MoveDirection.Magnitude > 0
+        local now =
+            os.clock()
+
+        local moving =
+            humanoid.MoveDirection.Magnitude > 0
+
+        -- ----------------------------------------------------
+        -- MOVEMENT TIME
+        -- ----------------------------------------------------
 
         if moving then
             local mul = 1
+
             if cfg.ScaleWalkWithSpeed then
-                local v = root.AssemblyLinearVelocity
-                local flat = Vector3.new(v.X, 0, v.Z).Magnitude
-                mul = math.clamp(flat / 16, 0.4, 3)
+                local v =
+                    root.AssemblyLinearVelocity
+
+                local flat =
+                    Vector3.new(
+                        v.X,
+                        0,
+                        v.Z
+                    ).Magnitude
+
+                mul =
+                    math.clamp(
+                        flat / 16,
+                        0.4,
+                        3
+                    )
             end
-            walkTime += dt * mul
+
+            walkTime +=
+                dt * mul
+
             idleTime = 0
         else
             idleTime += dt
             walkTime = 0
         end
 
-        -- frames
+        -- ----------------------------------------------------
+        -- FRAME PICKING
+        -- ----------------------------------------------------
+
         local tex
+
         if moving then
-            tex = pickFrame(walk, walkTime, walkSpeed, cfg.WalkFrameCycle)
+            tex =
+                pickFrame(
+                    walk,
+                    walkTime,
+                    walkSpeed,
+                    cfg.WalkFrameCycle
+                )
         else
-            tex = pickFrame(idle, idleTime, cfg.IdleFrameSwitchSpeed, cfg.IdleFrameCycle)
+            tex =
+                pickFrame(
+                    idle,
+                    idleTime,
+                    cfg.IdleFrameSwitchSpeed,
+                    cfg.IdleFrameCycle
+                )
         end
+
         if tex ~= activeTexture then
-            activeTexture = tex
-            sprite.Image = tex
+            activeTexture =
+                tex
+
+            sprite.Image =
+                tex
         end
 
-        -- rainbow (multiplied by Tint)
+        -- ----------------------------------------------------
+        -- RAINBOW
+        -- ----------------------------------------------------
+
         if cfg.RainbowKeyframeColor then
-            local hue = (now / math.max(cfg.RainbowSpeed, 0.05)) % 1
-            currentColor = mulColor(Color3.fromHSV(hue, 1, 1), cfg.Tint)
-            sprite.ImageColor3 = currentColor
+            local hue =
+                (
+                    now
+                    / math.max(
+                        cfg.RainbowSpeed,
+                        0.05
+                    )
+                ) % 1
+
+            currentColor =
+                mulColor(
+                    Color3.fromHSV(
+                        hue,
+                        1,
+                        1
+                    ),
+                    cfg.Tint
+                )
+
+            sprite.ImageColor3 =
+                currentColor
+        else
+            currentColor =
+                cfg.Tint
+
+            sprite.ImageColor3 =
+                currentColor
         end
 
-        -- frame jiggle: squash toward the bottom edge right before one frame change,
-        -- stretch back to normal right before the next, looping. walking only.
+        -- ----------------------------------------------------
+        -- FRAME JIGGLE
+        -- ----------------------------------------------------
+
         if cfg.FrameJiggle then
             if moving then
-                local stepF = walkTime / math.max(walkSpeed, 0.01)
-                local whole = math.floor(stepF)
-                local e = (stepF - whole) ^ math.max(cfg.FrameJiggleEase, 0.1)
-                local amt = cfg.FrameJiggleStrength
+                local stepF =
+                    walkTime
+                    / math.max(
+                        walkSpeed,
+                        0.01
+                    )
+
+                local whole =
+                    math.floor(stepF)
+
+                local e =
+                    (
+                        stepF
+                        - whole
+                    ) ^ math.max(
+                        cfg.FrameJiggleEase,
+                        0.1
+                    )
+
+                local amt =
+                    cfg.FrameJiggleStrength
+
                 if whole % 2 == 0 then
-                    squashY = 1 - amt * e          -- normal -> squashed
+                    squashY =
+                        1 - amt * e
                 else
-                    squashY = 1 - amt * (1 - e)    -- squashed -> normal
+                    squashY =
+                        1
+                        - amt
+                        * (1 - e)
                 end
             else
-                -- stopped walking: settle back to normal and stay there
-                squashY = squashY + (1 - squashY) * math.min(1, dt * 18)
+                squashY =
+                    squashY
+                    + (
+                        1
+                        - squashY
+                    )
+                    * math.min(
+                        1,
+                        dt * 18
+                    )
             end
         end
 
-        -- glitch
-        if cfg.GlitchEffect and now >= nextGlitch then
-            nextGlitch = now + 1 / math.max(cfg.GlitchRate, 1)
-            local s = cfg.GlitchStrength
-            glitch.x = (math.random() * 2 - 1) * s
-            glitch.y = (math.random() * 2 - 1) * s
-            glitch.z = (math.random() * 2 - 1) * s
-            glitch.rot = (math.random() * 2 - 1) * s * 10
-            glitch.scale = 1 + (math.random() * 2 - 1) * s * 0.15
+        -- ----------------------------------------------------
+        -- GLITCH
+        -- ----------------------------------------------------
+
+        if cfg.GlitchEffect
+            and now >= nextGlitch
+        then
+            nextGlitch =
+                now
+                + 1 / math.max(
+                    cfg.GlitchRate,
+                    1
+                )
+
+            local s =
+                cfg.GlitchStrength
+
+            glitch.x =
+                (
+                    math.random()
+                    * 2 - 1
+                ) * s
+
+            glitch.y =
+                (
+                    math.random()
+                    * 2 - 1
+                ) * s
+
+            glitch.z =
+                (
+                    math.random()
+                    * 2 - 1
+                ) * s
+
+            glitch.rot =
+                (
+                    math.random()
+                    * 2 - 1
+                ) * s * 10
+
+            glitch.scale =
+                1
+                + (
+                    math.random()
+                    * 2 - 1
+                )
+                * s
+                * 0.15
         end
 
-        -- shape effects: jiggle/glitch/wobble/hover/breath/boil all combine here
+        -- ----------------------------------------------------
+        -- TRANSFORM EFFECTS
+        -- ----------------------------------------------------
+
         if transformActive then
-            local k = math.min(1, dt * 10) -- smooth on/off so nothing snaps when you start/stop walking
-            local wobbleTarget = (cfg.WobbleEffect and (moving or cfg.WobbleWhenIdle)) and 1 or 0
-            local hoverTarget = (cfg.HoverBob and (not cfg.HoverOnlyWhenIdle or not moving)) and 1 or 0
-            local breathTarget = (cfg.BreathEffect and not moving) and 1 or 0
-            amp.wobble += (wobbleTarget - amp.wobble) * k
-            amp.hover += (hoverTarget - amp.hover) * k
-            amp.breath += (breathTarget - amp.breath) * k
+            local k =
+                math.min(
+                    1,
+                    dt * 10
+                )
 
-            if cfg.BoilEffect and now >= nextBoil then
-                nextBoil = now + 1 / math.max(cfg.BoilRate, 1)
-                local bs = cfg.BoilStrength
-                boil.rot = (math.random() * 2 - 1) * bs
-                boil.x = (math.random() * 2 - 1) * bs * 0.004
-                boil.y = (math.random() * 2 - 1) * bs * 0.004
+            local wobbleTarget =
+                (
+                    cfg.WobbleEffect
+                    and (
+                        moving
+                        or cfg.WobbleWhenIdle
+                    )
+                )
+                and 1
+                or 0
+
+            local hoverTarget =
+                (
+                    cfg.HoverBob
+                    and (
+                        not cfg.HoverOnlyWhenIdle
+                        or not moving
+                    )
+                )
+                and 1
+                or 0
+
+            local breathTarget =
+                (
+                    cfg.BreathEffect
+                    and not moving
+                )
+                and 1
+                or 0
+
+            amp.wobble +=
+                (
+                    wobbleTarget
+                    - amp.wobble
+                ) * k
+
+            amp.hover +=
+                (
+                    hoverTarget
+                    - amp.hover
+                ) * k
+
+            amp.breath +=
+                (
+                    breathTarget
+                    - amp.breath
+                ) * k
+
+            if cfg.BoilEffect
+                and now >= nextBoil
+            then
+                nextBoil =
+                    now
+                    + 1 / math.max(
+                        cfg.BoilRate,
+                        1
+                    )
+
+                local bs =
+                    cfg.BoilStrength
+
+                boil.rot =
+                    (
+                        math.random()
+                        * 2 - 1
+                    ) * bs
+
+                boil.x =
+                    (
+                        math.random()
+                        * 2 - 1
+                    )
+                    * bs
+                    * 0.004
+
+                boil.y =
+                    (
+                        math.random()
+                        * 2 - 1
+                    )
+                    * bs
+                    * 0.004
             end
 
-            local rot = glitch.rot + boil.rot
+            local rot =
+                glitch.rot
+                + boil.rot
+
             if amp.wobble > 0.001 then
-                rot += math.sin(now * cfg.WobbleSpeed * 6.2832) * cfg.WobbleStrength * amp.wobble
-            end
-            local scaleY = squashY
-            if amp.breath > 0.001 then
-                scaleY *= 1 + math.sin(now * cfg.BreathSpeed * 6.2832) * cfg.BreathStrength * amp.breath
-            end
-            hoverOffset = 0
-            if amp.hover > 0.001 then
-                hoverOffset = math.sin(now * cfg.HoverSpeed * 6.2832) * cfg.HoverHeight * amp.hover
+                rot +=
+                    math.sin(
+                        now
+                        * cfg.WobbleSpeed
+                        * 6.2832
+                    )
+                    * cfg.WobbleStrength
+                    * amp.wobble
             end
 
-            sprite.Rotation = rot
-            sprite.Size = UDim2.new(glitch.scale, 0, glitch.scale * scaleY, 0)
-            sprite.Position = UDim2.new(0.5 + boil.x, 0, 1 + boil.y, 0)
-            gui.StudsOffset = Vector3.new(glitch.x, cfg.studsOffsetY + glitch.y + hoverOffset, glitch.z)
+            local scaleY =
+                squashY
+
+            if amp.breath > 0.001 then
+                scaleY *=
+                    1
+                    + math.sin(
+                        now
+                        * cfg.BreathSpeed
+                        * 6.2832
+                    )
+                    * cfg.BreathStrength
+                    * amp.breath
+            end
+
+            hoverOffset = 0
+
+            if amp.hover > 0.001 then
+                hoverOffset =
+                    math.sin(
+                        now
+                        * cfg.HoverSpeed
+                        * 6.2832
+                    )
+                    * cfg.HoverHeight
+                    * amp.hover
+            end
+
+            sprite.Rotation =
+                rot
+
+            sprite.Size =
+                UDim2.new(
+                    glitch.scale,
+                    0,
+                    glitch.scale
+                        * scaleY,
+                    0
+                )
+
+            sprite.Position =
+                UDim2.new(
+                    0.5 + boil.x,
+                    0,
+                    1 + boil.y,
+                    0
+                )
+
+            gui.StudsOffset =
+                Vector3.new(
+                    glitch.x,
+                    cfg.studsOffsetY
+                        + glitch.y
+                        + hoverOffset,
+                    glitch.z
+                )
         end
 
-        -- visibility effects: ghost pulse / flicker combine into one transparency
+        -- ----------------------------------------------------
+        -- VISIBILITY
+        -- ----------------------------------------------------
+
         if alphaActive then
             local vis = 1
+
             if cfg.GhostPulse then
-                local wave = (math.sin(now * cfg.GhostPulseSpeed * 6.2832) + 1) / 2
-                vis *= cfg.GhostPulseMin + (1 - cfg.GhostPulseMin) * wave
+                local wave =
+                    (
+                        math.sin(
+                            now
+                            * cfg.GhostPulseSpeed
+                            * 6.2832
+                        ) + 1
+                    ) / 2
+
+                vis *=
+                    cfg.GhostPulseMin
+                    + (
+                        1
+                        - cfg.GhostPulseMin
+                    ) * wave
             end
+
             if cfg.FlickerEffect then
-                if now >= flickerUntil and math.random() < cfg.FlickerRate * dt then
-                    flickerUntil = now + cfg.FlickerDuration * (0.5 + math.random())
+                if now >= flickerUntil
+                    and math.random()
+                        < cfg.FlickerRate * dt
+                then
+                    flickerUntil =
+                        now
+                        + cfg.FlickerDuration
+                        * (
+                            0.5
+                            + math.random()
+                        )
                 end
+
                 if now < flickerUntil then
-                    vis *= 1 - math.clamp(cfg.FlickerDepth, 0, 1)
+                    vis *=
+                        1
+                        - math.clamp(
+                            cfg.FlickerDepth,
+                            0,
+                            1
+                        )
                 end
             end
-            local tr = 1 - (1 - cfg.Transparency) * vis
-            if math.abs(tr - lastAlpha) > 0.002 then
+
+            local tr =
+                1
+                - (
+                    1
+                    - cfg.Transparency
+                ) * vis
+
+            if math.abs(
+                tr - lastAlpha
+            ) > 0.002 then
                 lastAlpha = tr
-                sprite.ImageTransparency = tr
+
+                sprite.ImageTransparency =
+                    tr
+            end
+        else
+            if sprite.ImageTransparency
+                ~= cfg.Transparency
+            then
+                sprite.ImageTransparency =
+                    cfg.Transparency
             end
         end
 
-        -- afterimages
+        -- ----------------------------------------------------
+        -- UI AFTERIMAGES
+        -- ----------------------------------------------------
+
         if cfg.AfterimageEffect then
-            local rate = moving and cfg.AfterimageWalkRate or cfg.AfterimageIdleRate
-            if now - lastTrail >= rate then
+            local rate =
+                moving
+                and cfg.AfterimageWalkRate
+                or cfg.AfterimageIdleRate
+
+            if now - lastTrail >=
+                math.max(
+                    rate,
+                    0.001
+                )
+            then
                 lastTrail = now
-                spawnAfterimage(activeTexture, moving)
+
+                createGhost(
+                    activeTexture,
+                    moving,
+                    sprite.Position,
+                    Vector2.new(
+                        1,
+                        1
+                    ),
+                    currentColor
+                )
             end
+
+            updateGhosts(now)
         end
 
-        -- point light: keep your values applied (some games reset their lights)
+        -- ----------------------------------------------------
+        -- POINT LIGHT
+        -- ----------------------------------------------------
+
         if lightRef and pl then
             if pl.FollowSkinColor then
-                lightRef.Color = currentColor
-            elseif pl.Color and lightRef.Color ~= pl.Color then
-                lightRef.Color = pl.Color
+                lightRef.Color =
+                    currentColor
+
+            elseif pl.Color
+                and lightRef.Color
+                    ~= pl.Color
+            then
+                lightRef.Color =
+                    pl.Color
             end
-            if pl.Brightness and lightRef.Brightness ~= pl.Brightness then lightRef.Brightness = pl.Brightness end
-            if pl.Range and lightRef.Range ~= pl.Range then lightRef.Range = pl.Range end
-            if not lightRef.Enabled then lightRef.Enabled = true end
+
+            if pl.Brightness
+                and lightRef.Brightness
+                    ~= pl.Brightness
+            then
+                lightRef.Brightness =
+                    pl.Brightness
+            end
+
+            if pl.Range
+                and lightRef.Range
+                    ~= pl.Range
+            then
+                lightRef.Range =
+                    pl.Range
+            end
+
+            if not lightRef.Enabled then
+                lightRef.Enabled = true
+            end
         end
 
-        -- hide the real character
+        -- ----------------------------------------------------
+        -- HIDE REAL CHARACTER
+        -- ----------------------------------------------------
+
         for i = 1, #hiddenParts do
-            hiddenParts[i].LocalTransparencyModifier = 1
+            hiddenParts[i]
+                .LocalTransparencyModifier = 1
         end
     end
 
-    -- errors are caught so one bad frame can't spam the console or kill the skin
-    local errored = false
-    conns[#conns + 1] = RunService.RenderStepped:Connect(function(dt)
-        local ok, err = pcall(step, dt)
-        if not ok and not errored then
-            errored = true
-            warn(TAG .. "render error (send this to the dev): " .. tostring(err))
-        end
-    end)
+    -- ========================================================
+    -- RENDER CONNECTION
+    -- ========================================================
 
-    -- cleanup (gone for good on reset/respawn, never comes back)
+    local errored = false
+
+    conns[#conns + 1] =
+        RunService.RenderStepped:Connect(
+            function(dt)
+                local ok, err =
+                    pcall(
+                        step,
+                        dt
+                    )
+
+                if not ok
+                    and not errored
+                then
+                    errored = true
+
+                    warn(
+                        TAG
+                        .. "render error "
+                        .. "(send this to the dev): "
+                        .. tostring(err)
+                    )
+                end
+            end
+        )
+
+    -- ========================================================
+    -- CLEANUP
+    -- ========================================================
+
     local function destroy()
-        if not alive then return end
+        if not alive then
+            return
+        end
+
         alive = false
-        for _, c in ipairs(conns) do c:Disconnect() end
-        for _, s in ipairs(sounds) do s:Destroy() end
-        for i = 1, #hiddenParts do
-            pcall(function() hiddenParts[i].LocalTransparencyModifier = 0 end)
-        end
-        if oldDisplayType then
-            pcall(function() humanoid.DisplayDistanceType = oldDisplayType end)
-        end
-        if lightRef and lightOriginal and lightRef.Parent then
+
+        for _, c in ipairs(conns) do
             pcall(function()
-                lightRef.Color = lightOriginal.Color
-                lightRef.Brightness = lightOriginal.Brightness
-                lightRef.Range = lightOriginal.Range
-                lightRef.Enabled = lightOriginal.Enabled
+                c:Disconnect()
             end)
         end
-        gui:Destroy()
-        if trailHolder then trailHolder:Destroy() end
+
+        cleanupGhosts()
+
+        for _, s in ipairs(sounds) do
+            pcall(function()
+                s:Destroy()
+            end)
+        end
+
+        for i = 1, #hiddenParts do
+            pcall(function()
+                hiddenParts[i]
+                    .LocalTransparencyModifier = 0
+            end)
+        end
+
+        if oldDisplayType then
+            pcall(function()
+                humanoid.DisplayDistanceType =
+                    oldDisplayType
+            end)
+        end
+
+        if lightRef
+            and lightOriginal
+            and lightRef.Parent
+        then
+            pcall(function()
+                lightRef.Color =
+                    lightOriginal.Color
+
+                lightRef.Brightness =
+                    lightOriginal.Brightness
+
+                lightRef.Range =
+                    lightOriginal.Range
+
+                lightRef.Enabled =
+                    lightOriginal.Enabled
+            end)
+        end
+
+        if gui then
+            pcall(function()
+                gui:Destroy()
+            end)
+        end
+
         wipeDownloads()
-        if env.__SkinBrainCleanup == destroy then env.__SkinBrainCleanup = nil end
+
+        if env.__SkinBrainCleanup
+            == destroy
+        then
+            env.__SkinBrainCleanup =
+                nil
+        end
     end
 
-    conns[#conns + 1] = char.AncestryChanged:Connect(function()
-        if not char:IsDescendantOf(game) then destroy() end
-    end)
-    conns[#conns + 1] = humanoid.Died:Connect(destroy)
+    -- ========================================================
+    -- CHARACTER REMOVAL
+    -- ========================================================
 
-    env.__SkinBrainCleanup = destroy
-    return {Destroy = destroy}
+    conns[#conns + 1] =
+        char.AncestryChanged:Connect(
+            function()
+                if not char:IsDescendantOf(
+                    game
+                ) then
+                    destroy()
+                end
+            end
+        )
+
+    conns[#conns + 1] =
+        humanoid.Died:Connect(
+            destroy
+        )
+
+    env.__SkinBrainCleanup =
+        destroy
+
+    return {
+        Destroy = destroy,
+    }
 end
 
+-- ============================================================
+-- EXPORT
+-- ============================================================
+
 env.SkinBrain = Brain
+
 return Brain
