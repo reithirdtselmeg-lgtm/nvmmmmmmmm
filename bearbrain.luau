@@ -55,9 +55,9 @@ local DEFAULTS = {
     AfterimageFadeTime = 0.75,
     AfterimageTransparency = 0.4,
     AfterimageDistort = true,
-    AfterimageSizeScale = 1,       -- multiplies the size of each ghost
+    AfterimageSizeScale = 0.5,       -- multiplies the size of each ghost
     AfterimageGrow = 0,            -- ghosts grow as they fade (0.2 = 20% bigger by the end)
-    AfterimageLightEmission = 0,   -- 0 = normal, 1 = glowing/additive (great with rainbow)
+    AfterimageLightEmission = 0.5,   -- 0 = normal, 1 = glowing/additive (great with rainbow)
 
     WobbleEffect = false,          -- sprite tilts side to side
     WobbleStrength = 6,            -- degrees
@@ -917,8 +917,8 @@ function Brain.Run(userCfg)
         local squash = (aspect - 1) / (aspect + 1)
         local baseSize = cfg.sizeX / math.max(1 - squash, 0.05) * cfg.AfterimageSizeScale
         local endSize = baseSize * (1 + cfg.AfterimageGrow)
-        local sizeEnv = cfg.AfterimageDistort and baseSize * 0.17 or 0
-        local squashEnv = cfg.AfterimageDistort and 0.1 or 0
+        local sizeEnv = cfg.AfterimageDistort and baseSize * 0.075 or 0
+        local squashEnv = cfg.AfterimageDistort and 0.08 or 0
 
         for _, set in ipairs({idle, walk}) do
             for _, id in ipairs(set) do
