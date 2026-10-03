@@ -915,10 +915,10 @@ function Brain.Run(userCfg)
         -- (exact for square sprites like 8x8, best-effort for tall/wide ones)
         local aspect = cfg.sizeY / math.max(cfg.sizeX, 0.01)
         local squash = (aspect - 1) / (aspect + 1)
-        local baseSize = cfg.sizeX / math.max(1 - squash, 0.05) * cfg.AfterimageSizeScale
-        local endSize = baseSize * (1 + cfg.AfterimageGrow)
-        local sizeEnv = cfg.AfterimageDistort and baseSize * 0.075 or 0
-        local squashEnv = cfg.AfterimageDistort and 0.08 or 0
+        local baseSize = cfg.sizeX / math.max(1 - squash, 0.013) * cfg.AfterimageSizeScale
+        local endSize = baseSize * (0.02 + cfg.AfterimageGrow)
+        local sizeEnv = cfg.AfterimageDistort and baseSize * 0.015 or 0
+        local squashEnv = cfg.AfterimageDistort and 0.01 or 0
 
         for _, set in ipairs({idle, walk}) do
             for _, id in ipairs(set) do
@@ -942,11 +942,11 @@ function Brain.Run(userCfg)
                     em.Transparency = NumberSequence.new(cfg.AfterimageTransparency, 1)
                     em.Size = NumberSequence.new({
                         NumberSequenceKeypoint.new(0, baseSize, sizeEnv),
-                        NumberSequenceKeypoint.new(1, endSize, sizeEnv),
+                        NumberSequenceKeypoint.new(0.1, endSize, sizeEnv),
                     })
                     em.Squash = NumberSequence.new({
                         NumberSequenceKeypoint.new(0, squash, squashEnv),
-                        NumberSequenceKeypoint.new(1, squash, squashEnv),
+                        NumberSequenceKeypoint.new(0.1, squash, squashEnv),
                     })
                     em.Parent = attach
                     emitters[id] = em
