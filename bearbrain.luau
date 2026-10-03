@@ -1,16 +1,15 @@
--- SkinBrain v1.6
+-- SkinBrain v1.7
 -- the boring work: downloads/caching, frame logic, billboard, effects, cleanup.
 -- you never need to edit this. all settings live in SkinTemplate.lua.
 -- host it (github raw link) or put it in your executor's workspace as "SkinBrain.lua".
 
 local Players         = game:GetService("Players")
 local RunService      = game:GetService("RunService")
-local TweenService    = game:GetService("TweenService")
 local ContentProvider = game:GetService("ContentProvider")
 
 local env = (getgenv and getgenv()) or _G
 local TAG = "[SkinBrain] "
-local Brain = {Version = "1.6"}
+local Brain = {Version = "1.7"}
 
 -- --- DEFAULTS ---
 local DEFAULTS = {
@@ -56,6 +55,9 @@ local DEFAULTS = {
     AfterimageFadeTime = 0.75,
     AfterimageTransparency = 0.4,
     AfterimageDistort = true,
+    AfterimageSizeScale = 1,       -- multiplies the size of each ghost
+    AfterimageGrow = 0,            -- ghosts grow as they fade (0.2 = 20% bigger by the end)
+    AfterimageLightEmission = 0,   -- 0 = normal, 1 = glowing/additive (great with rainbow)
 
     WobbleEffect = false,          -- sprite tilts side to side
     WobbleStrength = 6,            -- degrees
@@ -118,6 +120,8 @@ local function buildConfig(user)
     cfg.Transparency = math.clamp(cfg.Transparency, 0, 1)
     cfg.LightInfluence = math.clamp(cfg.LightInfluence, 0, 1)
     cfg.AfterimageMax = math.max(math.floor(cfg.AfterimageMax), 0)
+    cfg.AfterimageSizeScale = math.max(cfg.AfterimageSizeScale, 0.05)
+    cfg.AfterimageLightEmission = math.clamp(cfg.AfterimageLightEmission, 0, 1)
     cfg.GhostPulseMin = math.clamp(cfg.GhostPulseMin, 0, 1)
     if cfg.WalkFrameSwitchSpeed ~= nil and type(cfg.WalkFrameSwitchSpeed) ~= "number" then
         warn(TAG .. "WalkFrameSwitchSpeed should be a number or nil, using the default")
@@ -880,74 +884,99 @@ function Brain.Run(userCfg)
         return nil
     end
 
-    -- afterimage holder + pool
-    local trailHolder
-    local trailPool, activeTrails = {}, 0
+    -- afterimages (real ParticleEmitters).
+    -- a particle can't change texture after it's emitted, so there is one emitter per sprite frame
+    -- and we fire the one that matches the frame you're currently showing
+    local trailHolder, trailPart
+    local emitters, emitTimes = {}, {}
+    local currentColor = cfg.Tint
+    local hoverOffset = 0
+
     if cfg.AfterimageEffect then
         trailHolder = Instance.new("Folder")
         trailHolder.Name = "SkinBrainTrails"
         trailHolder.Parent = workspace
-    end
 
-    local currentColor = cfg.Tint
-    local hoverOffset = 0
+        trailPart = Instance.new("Part")
+        trailPart.Name = "TrailAnchor"
+        trailPart.Size = Vector3.new(0.2, 0.2, 0.2)
+        trailPart.Transparency = 1
+        trailPart.Anchored = true
+        trailPart.CanCollide = false
+        trailPart.CanQuery = false
+        trailPart.CanTouch = false
+        trailPart.CFrame = root.CFrame
+        trailPart.Parent = trailHolder
 
-    local function acquireTrail()
-        local t = table.remove(trailPool)
-        if t then return t end
-        local part = Instance.new("Part")
-        part.Size = Vector3.new(1, 1, 1)
-        part.Transparency = 1
-        part.CanCollide = false
-        part.CanQuery = false
-        part.CanTouch = false
-        part.Anchored = true
-        local tgui = Instance.new("BillboardGui")
-        tgui.AlwaysOnTop = cfg.AlwaysOnTop
-        tgui.LightInfluence = cfg.LightInfluence
-        tgui.Parent = part
-        local img = Instance.new("ImageLabel")
-        img.Size = UDim2.new(1, 0, 1, 0)
-        img.BackgroundTransparency = 1
-        if cfg.PixelArt then img.ResampleMode = Enum.ResamplerMode.Pixelated end
-        img.ZIndex = 0
-        img.Parent = tgui
-        return {part = part, gui = tgui, img = img}
+        local attach = Instance.new("Attachment")
+        attach.Parent = trailPart
+
+        -- particles are square; Squash stretches them to your sprite's proportions
+        -- (exact for square sprites like 8x8, best-effort for tall/wide ones)
+        local aspect = cfg.sizeY / math.max(cfg.sizeX, 0.01)
+        local squash = (aspect - 1) / (aspect + 1)
+        local baseSize = cfg.sizeX / math.max(1 - squash, 0.05) * cfg.AfterimageSizeScale
+        local endSize = baseSize * (1 + cfg.AfterimageGrow)
+        local sizeEnv = cfg.AfterimageDistort and baseSize * 0.17 or 0
+        local squashEnv = cfg.AfterimageDistort and 0.1 or 0
+
+        for _, set in ipairs({idle, walk}) do
+            for _, id in ipairs(set) do
+                if not emitters[id] then
+                    local em = Instance.new("ParticleEmitter")
+                    em.Texture = id
+                    em.Rate = 0 -- we emit by hand
+                    em.Enabled = true
+                    em.Speed = NumberRange.new(0)
+                    em.SpreadAngle = Vector2.new(0, 0)
+                    em.Acceleration = Vector3.new(0, 0, 0)
+                    em.Drag = 0
+                    em.Rotation = NumberRange.new(0)
+                    em.RotSpeed = NumberRange.new(0)
+                    em.LockedToPart = false -- ghosts stay where they were emitted
+                    em.Orientation = Enum.ParticleOrientation.FacingCamera
+                    em.LightEmission = cfg.AfterimageLightEmission
+                    em.LightInfluence = cfg.LightInfluence
+                    em.Lifetime = NumberRange.new(cfg.AfterimageFadeTime)
+                    em.Color = ColorSequence.new(currentColor)
+                    em.Transparency = NumberSequence.new(cfg.AfterimageTransparency, 1)
+                    em.Size = NumberSequence.new({
+                        NumberSequenceKeypoint.new(0, baseSize, sizeEnv),
+                        NumberSequenceKeypoint.new(1, endSize, sizeEnv),
+                    })
+                    em.Squash = NumberSequence.new({
+                        NumberSequenceKeypoint.new(0, squash, squashEnv),
+                        NumberSequenceKeypoint.new(1, squash, squashEnv),
+                    })
+                    em.Parent = attach
+                    emitters[id] = em
+                end
+            end
+        end
     end
 
     local function spawnAfterimage(texture, moving)
-        if texture == "" or activeTrails >= cfg.AfterimageMax then return end
-        local t = acquireTrail()
-        activeTrails += 1
+        local em = emitters[texture]
+        if not em then return end
 
-        t.part.CFrame = root.CFrame * CFrame.new(0, cfg.studsOffsetY + hoverOffset, moving and -0.6 or -0.4)
+        local now = os.clock()
+        local life = cfg.AfterimageFadeTime * (moving and 1 or 1.33)
 
-        if cfg.AfterimageDistort then
-            t.gui.Size = UDim2.new(
-                cfg.sizeX * (math.random(70, 115) / 100), 0,
-                cfg.sizeY * (math.random(75, 110) / 100), 0
-            )
-        else
-            t.gui.Size = UDim2.new(cfg.sizeX, 0, cfg.sizeY, 0)
+        -- cap how many ghosts are alive at once
+        while emitTimes[1] and emitTimes[1] < now - cfg.AfterimageFadeTime * 1.33 do
+            table.remove(emitTimes, 1)
         end
+        if #emitTimes >= cfg.AfterimageMax then return end
+        emitTimes[#emitTimes + 1] = now
 
-        t.img.Image = texture
-        t.img.ImageColor3 = currentColor
-        t.img.ImageTransparency = cfg.AfterimageTransparency
-        t.part.Parent = trailHolder
+        -- spawn at the sprite's center, nudged slightly away from the camera so ghosts sit behind it
+        local cam = workspace.CurrentCamera
+        local back = cam and cam.CFrame.LookVector * 0.4 or Vector3.new(0, 0, 0)
+        trailPart.CFrame = CFrame.new(root.Position + Vector3.new(0, cfg.studsOffsetY + hoverOffset, 0) + back)
 
-        local fade = cfg.AfterimageFadeTime * (moving and 1 or 1.33)
-        local tween = TweenService:Create(
-            t.img,
-            TweenInfo.new(fade, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-            {ImageTransparency = 1}
-        )
-        tween.Completed:Once(function()
-            t.part.Parent = nil
-            activeTrails -= 1
-            trailPool[#trailPool + 1] = t
-        end)
-        tween:Play()
+        em.Lifetime = NumberRange.new(life)
+        if cfg.RainbowKeyframeColor then em.Color = ColorSequence.new(currentColor) end
+        em:Emit(1)
     end
 
     -- hide the real character (optional)
