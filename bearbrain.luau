@@ -1,4 +1,4 @@
--- SkinBrain v1.5
+-- SkinBrain v1.6
 -- the boring work: downloads/caching, frame logic, billboard, effects, cleanup.
 -- you never need to edit this. all settings live in SkinTemplate.lua.
 -- host it (github raw link) or put it in your executor's workspace as "SkinBrain.lua".
@@ -10,7 +10,7 @@ local ContentProvider = game:GetService("ContentProvider")
 
 local env = (getgenv and getgenv()) or _G
 local TAG = "[SkinBrain] "
-local Brain = {Version = "1.5"}
+local Brain = {Version = "1.6"}
 
 -- --- DEFAULTS ---
 local DEFAULTS = {
@@ -57,6 +57,33 @@ local DEFAULTS = {
     AfterimageTransparency = 0.4,
     AfterimageDistort = true,
 
+    WobbleEffect = false,          -- sprite tilts side to side
+    WobbleStrength = 6,            -- degrees
+    WobbleSpeed = 1.6,             -- sways per second
+    WobbleWhenIdle = false,        -- false = only while walking
+
+    HoverBob = false,              -- floats up and down
+    HoverHeight = 0.3,             -- studs
+    HoverSpeed = 0.6,              -- bobs per second
+    HoverOnlyWhenIdle = false,     -- true = only bobs while standing still
+
+    BreathEffect = false,          -- gentle squash/stretch while standing still
+    BreathStrength = 0.03,
+    BreathSpeed = 0.4,
+
+    GhostPulse = false,            -- fades in and out slowly
+    GhostPulseMin = 0.3,           -- how visible it gets at its faintest (0 = fully gone, 1 = no pulse)
+    GhostPulseSpeed = 0.35,        -- pulses per second
+
+    FlickerEffect = false,         -- random blinks, like unstable data
+    FlickerRate = 1.5,             -- average flickers per second
+    FlickerDuration = 0.08,        -- seconds per flicker
+    FlickerDepth = 0.85,           -- how invisible it gets during a flicker
+
+    BoilEffect = false,            -- choppy hand-drawn jitter
+    BoilStrength = 1.5,
+    BoilRate = 8,                  -- jitters per second
+
     -- downloads / logging
     ForceRedownload = false,
     DownloadTimeout = 20,
@@ -91,6 +118,7 @@ local function buildConfig(user)
     cfg.Transparency = math.clamp(cfg.Transparency, 0, 1)
     cfg.LightInfluence = math.clamp(cfg.LightInfluence, 0, 1)
     cfg.AfterimageMax = math.max(math.floor(cfg.AfterimageMax), 0)
+    cfg.GhostPulseMin = math.clamp(cfg.GhostPulseMin, 0, 1)
     if cfg.WalkFrameSwitchSpeed ~= nil and type(cfg.WalkFrameSwitchSpeed) ~= "number" then
         warn(TAG .. "WalkFrameSwitchSpeed should be a number or nil, using the default")
         cfg.WalkFrameSwitchSpeed = nil
@@ -862,6 +890,7 @@ function Brain.Run(userCfg)
     end
 
     local currentColor = cfg.Tint
+    local hoverOffset = 0
 
     local function acquireTrail()
         local t = table.remove(trailPool)
@@ -891,7 +920,7 @@ function Brain.Run(userCfg)
         local t = acquireTrail()
         activeTrails += 1
 
-        t.part.CFrame = root.CFrame * CFrame.new(0, cfg.studsOffsetY, moving and -0.6 or -0.4)
+        t.part.CFrame = root.CFrame * CFrame.new(0, cfg.studsOffsetY + hoverOffset, moving and -0.6 or -0.4)
 
         if cfg.AfterimageDistort then
             t.gui.Size = UDim2.new(
@@ -1007,6 +1036,13 @@ function Brain.Run(userCfg)
     local glitch = {x = 0, y = 0, z = 0, rot = 0, scale = 1}
     local nextGlitch, lastTrail = 0, 0
 
+    local transformActive = cfg.FrameJiggle or cfg.GlitchEffect or cfg.WobbleEffect
+        or cfg.HoverBob or cfg.BreathEffect or cfg.BoilEffect
+    local alphaActive = cfg.GhostPulse or cfg.FlickerEffect
+    local amp = {wobble = 0, hover = 0, breath = 0}
+    local boil = {rot = 0, x = 0, y = 0}
+    local nextBoil, flickerUntil, lastAlpha = 0, 0, -1
+
     local function step(dt)
         local now = os.clock()
         local moving = humanoid.MoveDirection.Magnitude > 0
@@ -1073,10 +1109,64 @@ function Brain.Run(userCfg)
             glitch.rot = (math.random() * 2 - 1) * s * 10
             glitch.scale = 1 + (math.random() * 2 - 1) * s * 0.15
         end
-        if cfg.FrameJiggle or cfg.GlitchEffect then
-            sprite.Rotation = glitch.rot
-            sprite.Size = UDim2.new(glitch.scale, 0, glitch.scale * squashY, 0)
-            gui.StudsOffset = Vector3.new(glitch.x, cfg.studsOffsetY + glitch.y, glitch.z)
+
+        -- shape effects: jiggle/glitch/wobble/hover/breath/boil all combine here
+        if transformActive then
+            local k = math.min(1, dt * 10) -- smooth on/off so nothing snaps when you start/stop walking
+            local wobbleTarget = (cfg.WobbleEffect and (moving or cfg.WobbleWhenIdle)) and 1 or 0
+            local hoverTarget = (cfg.HoverBob and (not cfg.HoverOnlyWhenIdle or not moving)) and 1 or 0
+            local breathTarget = (cfg.BreathEffect and not moving) and 1 or 0
+            amp.wobble += (wobbleTarget - amp.wobble) * k
+            amp.hover += (hoverTarget - amp.hover) * k
+            amp.breath += (breathTarget - amp.breath) * k
+
+            if cfg.BoilEffect and now >= nextBoil then
+                nextBoil = now + 1 / math.max(cfg.BoilRate, 1)
+                local bs = cfg.BoilStrength
+                boil.rot = (math.random() * 2 - 1) * bs
+                boil.x = (math.random() * 2 - 1) * bs * 0.004
+                boil.y = (math.random() * 2 - 1) * bs * 0.004
+            end
+
+            local rot = glitch.rot + boil.rot
+            if amp.wobble > 0.001 then
+                rot += math.sin(now * cfg.WobbleSpeed * 6.2832) * cfg.WobbleStrength * amp.wobble
+            end
+            local scaleY = squashY
+            if amp.breath > 0.001 then
+                scaleY *= 1 + math.sin(now * cfg.BreathSpeed * 6.2832) * cfg.BreathStrength * amp.breath
+            end
+            hoverOffset = 0
+            if amp.hover > 0.001 then
+                hoverOffset = math.sin(now * cfg.HoverSpeed * 6.2832) * cfg.HoverHeight * amp.hover
+            end
+
+            sprite.Rotation = rot
+            sprite.Size = UDim2.new(glitch.scale, 0, glitch.scale * scaleY, 0)
+            sprite.Position = UDim2.new(0.5 + boil.x, 0, 1 + boil.y, 0)
+            gui.StudsOffset = Vector3.new(glitch.x, cfg.studsOffsetY + glitch.y + hoverOffset, glitch.z)
+        end
+
+        -- visibility effects: ghost pulse / flicker combine into one transparency
+        if alphaActive then
+            local vis = 1
+            if cfg.GhostPulse then
+                local wave = (math.sin(now * cfg.GhostPulseSpeed * 6.2832) + 1) / 2
+                vis *= cfg.GhostPulseMin + (1 - cfg.GhostPulseMin) * wave
+            end
+            if cfg.FlickerEffect then
+                if now >= flickerUntil and math.random() < cfg.FlickerRate * dt then
+                    flickerUntil = now + cfg.FlickerDuration * (0.5 + math.random())
+                end
+                if now < flickerUntil then
+                    vis *= 1 - math.clamp(cfg.FlickerDepth, 0, 1)
+                end
+            end
+            local tr = 1 - (1 - cfg.Transparency) * vis
+            if math.abs(tr - lastAlpha) > 0.002 then
+                lastAlpha = tr
+                sprite.ImageTransparency = tr
+            end
         end
 
         -- afterimages
