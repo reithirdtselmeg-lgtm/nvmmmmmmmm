@@ -1,4 +1,4 @@
--- SkinBrain v1.7
+-- SkinBrain v1.9
 -- the boring work: downloads/caching, frame logic, billboard, effects, cleanup.
 -- you never need to edit this. all settings live in SkinTemplate.lua.
 -- host it (github raw link) or put it in your executor's workspace as "SkinBrain.lua".
@@ -9,7 +9,7 @@ local ContentProvider = game:GetService("ContentProvider")
 
 local env = (getgenv and getgenv()) or _G
 local TAG = "[SkinBrain] "
-local Brain = {Version = "1.7"}
+local Brain = {Version = "1.9"}
 
 -- --- DEFAULTS ---
 local DEFAULTS = {
@@ -55,9 +55,10 @@ local DEFAULTS = {
     AfterimageFadeTime = 0.75,
     AfterimageTransparency = 0.4,
     AfterimageDistort = true,
-    AfterimageSizeScale = 0.5,       -- multiplies the size of each ghost
-    AfterimageGrow = 0,            -- ghosts grow as they fade (0.2 = 20% bigger by the end)
-    AfterimageLightEmission = 0.5,   -- 0 = normal, 1 = glowing/additive (great with rainbow)
+    AfterimageSizeScale = 0.5,     -- multiplies the size of each ghost
+    AfterimageGrow = 0,            -- 0 = ghosts keep their size and just fade out. 0.2 = they grow 20% by the end
+    AfterimageLightEmission = 0.5, -- 0 = normal, 1 = glowing/additive (great with rainbow)
+    AfterimageZOffset = -0.5,      -- render depth of ghosts: negative = behind the sprite, 0 = same depth, positive = in front
 
     WobbleEffect = false,          -- sprite tilts side to side
     WobbleStrength = 6,            -- degrees
@@ -916,7 +917,7 @@ function Brain.Run(userCfg)
         local aspect = cfg.sizeY / math.max(cfg.sizeX, 0.01)
         local squash = (aspect - 1) / (aspect + 1)
         local baseSize = cfg.sizeX / math.max(1 - squash, 0.013) * cfg.AfterimageSizeScale
-        local endSize = baseSize * (0.02 + cfg.AfterimageGrow)
+        local endSize = baseSize * (1 + cfg.AfterimageGrow) -- default: same size the whole time, it only fades
         local sizeEnv = cfg.AfterimageDistort and baseSize * 0.015 or 0
         local squashEnv = cfg.AfterimageDistort and 0.01 or 0
 
@@ -937,6 +938,7 @@ function Brain.Run(userCfg)
                     em.Orientation = Enum.ParticleOrientation.FacingCamera
                     em.LightEmission = cfg.AfterimageLightEmission
                     em.LightInfluence = cfg.LightInfluence
+                    em.ZOffset = cfg.AfterimageZOffset -- layering by render depth, no physical offset
                     em.Lifetime = NumberRange.new(cfg.AfterimageFadeTime)
                     em.Color = ColorSequence.new(currentColor)
                     em.Transparency = NumberSequence.new(cfg.AfterimageTransparency, 1)
@@ -969,10 +971,9 @@ function Brain.Run(userCfg)
         if #emitTimes >= cfg.AfterimageMax then return end
         emitTimes[#emitTimes + 1] = now
 
-        -- spawn at the sprite's center, nudged slightly away from the camera so ghosts sit behind it
-        local cam = workspace.CurrentCamera
-        local back = cam and cam.CFrame.LookVector * 0.4 or Vector3.new(0, 0, 0)
-        trailPart.CFrame = CFrame.new(root.Position + Vector3.new(0, cfg.studsOffsetY + hoverOffset, 0) + back)
+        -- spawn exactly at the sprite's center. ghosts sit behind the sprite through the
+        -- emitter's ZOffset (render depth), not by moving where they spawn
+        trailPart.CFrame = CFrame.new(root.Position + Vector3.new(0, cfg.studsOffsetY + hoverOffset, 0))
 
         em.Lifetime = NumberRange.new(life)
         if cfg.RainbowKeyframeColor then em.Color = ColorSequence.new(currentColor) end
