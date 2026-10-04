@@ -1,4 +1,4 @@
--- SkinBrain v1.9
+-- SkinBrain v2.0
 -- the boring work: downloads/caching, frame logic, billboard, effects, cleanup.
 -- you never need to edit this. all settings live in SkinTemplate.lua.
 -- host it (github raw link) or put it in your executor's workspace as "SkinBrain.lua".
@@ -9,7 +9,7 @@ local ContentProvider = game:GetService("ContentProvider")
 
 local env = (getgenv and getgenv()) or _G
 local TAG = "[SkinBrain] "
-local Brain = {Version = "1.9"}
+local Brain = {Version = "2.0"}
 
 -- --- DEFAULTS ---
 local DEFAULTS = {
@@ -99,7 +99,8 @@ local DEFAULTS = {
     Debug = true,                  -- false = only print problems
 }
 -- settings that are allowed to be nil (so they aren't flagged as typos)
-local OPTIONAL = {WalkFrameSwitchSpeed = true, ThemeSound = true, PointLightModifier = true}
+local OPTIONAL = {WalkFrameSwitchSpeed = true, ThemeSound = true, PointLightModifier = true,
+    VoiceLines = true, StompSound = true}
 
 local function buildConfig(user)
     local cfg = {}
@@ -783,6 +784,12 @@ function Brain.Run(userCfg)
     local themeSrc = type(theme) == "table" and normalize(theme.Id) or nil
     if themeSrc then entries[#entries + 1] = {src = themeSrc, kind = "audio"} end
 
+    -- voice lines + stomp sounds: only downloaded when enabled
+    local voiceCfg = type(cfg.VoiceLines) == "table" and cfg.VoiceLines or nil
+    local stompCfg = type(cfg.StompSound) == "table" and cfg.StompSound or nil
+    local voiceSrc = (voiceCfg and voiceCfg.Enabled) and collect(voiceCfg.Sounds, "audio") or {}
+    local stompSrc = (stompCfg and stompCfg.Enabled) and collect(stompCfg.Sounds, "audio") or {}
+
     local resolved, downloadedPaths = resolveAll(entries, cfg)
 
     -- deletes the files this run downloaded/used (only if DeleteDownloadsOnRemove is on)
@@ -1020,6 +1027,81 @@ function Brain.Run(userCfg)
         end)
     end
 
+    -- voice lines (optional): one random line every MinDelay..MaxDelay seconds.
+    -- lines never overlap (it waits for the current one to finish) and never loop
+    local voiceAssets = frames(voiceSrc)
+    if voiceCfg and voiceCfg.Enabled and #voiceAssets > 0 then
+        local voiceSounds = {}
+        for i, id in ipairs(voiceAssets) do
+            local vs = Instance.new("Sound")
+            vs.Name = "SkinBrainVoice" .. i
+            vs.SoundId = id
+            vs.Volume = voiceCfg.Volume or 1
+            vs.Looped = false
+            if voiceCfg.RollOffMaxDistance then vs.RollOffMaxDistance = voiceCfg.RollOffMaxDistance end
+            vs.Parent = root
+            sounds[#sounds + 1] = vs
+            voiceSounds[i] = vs
+        end
+
+        task.spawn(function()
+            local minD = math.max(voiceCfg.MinDelay or 23, 0)
+            local maxD = math.max(voiceCfg.MaxDelay or 34, minD)
+            local lastPick
+            local nextAt = os.clock() + minD + math.random() * (maxD - minD)
+            while alive do
+                while alive and os.clock() < nextAt do task.wait(0.25) end
+                if not alive then break end
+
+                -- random line, but not the same one twice in a row
+                local pick = math.random(#voiceSounds)
+                if #voiceSounds > 1 and pick == lastPick then pick = pick % #voiceSounds + 1 end
+                lastPick = pick
+
+                local vs = voiceSounds[pick]
+                local startedAt = os.clock()
+                local finished = false
+                vs.TimePosition = 0
+                vs.Ended:Once(function() finished = true end)
+                vs:Play()
+                -- wait for it to end (with a timeout in case the sound never loads)
+                while alive and not finished and os.clock() - startedAt < 90 do task.wait(0.1) end
+
+                -- next line is timed from when this one started, but never before this one ended
+                nextAt = math.max(os.clock(), startedAt + minD + math.random() * (maxD - minD))
+            end
+        end)
+    end
+
+    -- stomp sounds (optional): a random footstep each time the walk frame switches
+    local stompAssets = frames(stompSrc)
+    local stompSounds, lastStomp, lastStompPick = {}, -1, nil
+    if stompCfg and stompCfg.Enabled and #stompAssets > 0 then
+        for i, id in ipairs(stompAssets) do
+            local ss = Instance.new("Sound")
+            ss.Name = "SkinBrainStomp" .. i
+            ss.SoundId = id
+            ss.Volume = stompCfg.Volume or 0.8
+            ss.Looped = false
+            if stompCfg.RollOffMaxDistance then ss.RollOffMaxDistance = stompCfg.RollOffMaxDistance end
+            ss.Parent = root
+            sounds[#sounds + 1] = ss
+            stompSounds[i] = ss
+        end
+    end
+
+    local function playStomp()
+        local n = #stompSounds
+        local pick = math.random(n)
+        if n > 1 and pick == lastStompPick then pick = pick % n + 1 end -- no same footstep twice in a row
+        lastStompPick = pick
+        local ss = stompSounds[pick]
+        local variation = stompCfg.PitchVariation or 0.08
+        ss.PlaybackSpeed = 1 + (math.random() * 2 - 1) * variation
+        ss.TimePosition = 0
+        ss:Play()
+    end
+
     -- PointLight modifier (optional). looks in your Head first, then anywhere in the character,
     -- and keeps watching in case the game removes/recreates the light
     local pl = type(cfg.PointLightModifier) == "table" and cfg.PointLightModifier or nil
@@ -1089,6 +1171,21 @@ function Brain.Run(userCfg)
         else
             idleTime += dt
             walkTime = 0
+        end
+
+        -- stomps: one footstep every time the walk frame switches (same timer as the animation,
+        -- so ScaleWalkWithSpeed speeds them up too). none while you're in the air.
+        -- the first one plays right as you start walking
+        if #stompSounds > 0 then
+            if moving then
+                local walkStep = math.floor(walkTime / math.max(walkSpeed, 0.01))
+                if walkStep ~= lastStomp then
+                    lastStomp = walkStep
+                    if humanoid.FloorMaterial ~= Enum.Material.Air then playStomp() end
+                end
+            else
+                lastStomp = -1
+            end
         end
 
         -- frames
