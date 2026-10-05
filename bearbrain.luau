@@ -1,4 +1,4 @@
--- SkinBrain v2.0
+-- SkinBrain v2.2
 -- the boring work: downloads/caching, frame logic, billboard, effects, cleanup.
 -- you never need to edit this. all settings live in SkinTemplate.lua.
 -- host it (github raw link) or put it in your executor's workspace as "SkinBrain.lua".
@@ -9,7 +9,7 @@ local ContentProvider = game:GetService("ContentProvider")
 
 local env = (getgenv and getgenv()) or _G
 local TAG = "[SkinBrain] "
-local Brain = {Version = "2.0"}
+local Brain = {Version = "2.2"}
 
 -- --- DEFAULTS ---
 local DEFAULTS = {
@@ -49,10 +49,9 @@ local DEFAULTS = {
     RainbowSpeed = 10,
 
     AfterimageEffect = false,
-    AfterimageWalkRate = 0.06,
-    AfterimageIdleRate = 0.18,
+    AfterimageRate = 0.15,         -- seconds between ghosts
     AfterimageMax = 40,
-    AfterimageFadeTime = 0.75,
+    AfterimageFadeTime = 0.5,      -- particle lifetime in seconds (TBB's emitter uses 0.5)
     AfterimageTransparency = 0.4,
     AfterimageDistort = true,
     AfterimageSizeScale = 0.5,     -- multiplies the size of each ghost
@@ -87,6 +86,27 @@ local DEFAULTS = {
     BoilStrength = 1.5,
     BoilRate = 8,                  -- jitters per second
 
+    -- billboard layers: copies of the sprite drawn behind it
+    ShadowEffect = false,          -- dark copy offset behind the sprite
+    ShadowOffsetX = 0.03,          -- fraction of the sprite size
+    ShadowOffsetY = 0.03,
+    ShadowColor = Color3.new(0, 0, 0),
+    ShadowTransparency = 0.55,
+
+    OutlineEffect = false,         -- colored outline around the sprite's shape
+    OutlineColor = Color3.new(1, 1, 1),
+    OutlineThickness = 0.025,      -- fraction of the sprite size
+
+    AuraEffect = false,            -- soft colored halo behind the sprite
+    AuraColor = Color3.fromRGB(255, 170, 255),
+    AuraSize = 0.12,               -- how much bigger than the sprite
+    AuraTransparency = 0.6,
+    AuraPulse = false,             -- breathes in and out
+    AuraPulseSpeed = 0.5,
+
+    RGBSplit = false,              -- red/blue color-split copies either side of the sprite
+    RGBSplitAmount = 0.03,         -- fraction of the sprite size
+
     -- downloads / logging
     ForceRedownload = false,
     DownloadTimeout = 20,
@@ -100,7 +120,7 @@ local DEFAULTS = {
 }
 -- settings that are allowed to be nil (so they aren't flagged as typos)
 local OPTIONAL = {WalkFrameSwitchSpeed = true, ThemeSound = true, PointLightModifier = true,
-    VoiceLines = true, StompSound = true}
+    VoiceLines = true, StompSound = true, OrbOrbit = true}
 
 local function buildConfig(user)
     local cfg = {}
@@ -790,6 +810,42 @@ function Brain.Run(userCfg)
     local voiceSrc = (voiceCfg and voiceCfg.Enabled) and collect(voiceCfg.Sounds, "audio") or {}
     local stompSrc = (stompCfg and stompCfg.Enabled) and collect(stompCfg.Sounds, "audio") or {}
 
+    -- orbs: one spec per orb. settings come from OrbOrbit, and each entry in Orbs can override any of them
+    local orbCfg = type(cfg.OrbOrbit) == "table" and cfg.OrbOrbit or nil
+    local orbSpecs = {}
+    if orbCfg and orbCfg.Enabled then
+        local shared = {
+            Type = "Ball",                           -- Ball | Fire | Smoke | Sparkles | Image
+            Color = Color3.fromRGB(255, 120, 60),
+            Size = 2,                                -- studs
+            Distance = 6,                            -- studs away from you
+            Height = 0,                              -- studs above your center (0 = your center height)
+            Speed = 0.5,                             -- orbits per second (negative = the other way)
+            Transparency = 0,
+            Tilt = 0,                                -- degrees, tips the orbit ring (90 = a vertical ring)
+            Bob = 0,                                 -- studs of up/down bobbing
+            BobSpeed = 1,
+            ImageFrameSpeed = 0.1,                   -- seconds per frame for gif/multi-frame image orbs
+        }
+        for k, v in pairs(orbCfg) do
+            if k ~= "Enabled" and k ~= "Orbs" and k ~= "Count" then shared[k] = v end
+        end
+        local entries = (type(orbCfg.Orbs) == "table" and #orbCfg.Orbs > 0) and orbCfg.Orbs or nil
+        local n = entries and #entries or math.max(math.floor(orbCfg.Count or 1), 1)
+        for i = 1, n do
+            local spec = {}
+            for k, v in pairs(shared) do spec[k] = v end
+            if entries then
+                for k, v in pairs(entries[i]) do spec[k] = v end
+            end
+            spec.Type = tostring(spec.Type):lower()
+            spec.phase = spec.Phase and math.rad(spec.Phase) or ((i - 1) / n * math.pi * 2)
+            if spec.Type == "image" then spec.imageSrc = collect(spec.Image, "image") end
+            if spec.Texture then spec.textureSrc = collect(spec.Texture, "image") end
+            orbSpecs[#orbSpecs + 1] = spec
+        end
+    end
+
     local resolved, downloadedPaths = resolveAll(entries, cfg)
 
     -- deletes the files this run downloaded/used (only if DeleteDownloadsOnRemove is on)
@@ -812,6 +868,10 @@ function Brain.Run(userCfg)
     local idle, walk = frames(idleSrc), frames(walkSrc)
     if #idle == 0 and #walk > 0 then idle = {walk[1]} end
     if #walk == 0 then walk = idle end
+    for _, spec in ipairs(orbSpecs) do
+        spec.frames = spec.imageSrc and frames(spec.imageSrc) or {}
+        spec.texture = spec.textureSrc and frames(spec.textureSrc)[1] or nil
+    end
     info(cfg, ("loaded '%s': %d idle frame(s), %d walk frame(s)"):format(
         cfg.SkinName, #frames(idleSrc), #frames(walkSrc)))
     if #idle == 0 then
@@ -843,18 +903,64 @@ function Brain.Run(userCfg)
     gui.StudsOffset = Vector3.new(0, cfg.studsOffsetY, 0)
     gui.Parent = root
 
+    -- holder frame: the shape effects (squash, wobble, hover...) move this, so the sprite and the
+    -- layers behind it (shadow/outline/aura/rgb split) always move together
+    local holder = Instance.new("Frame")
+    holder.Name = "Holder"
+    holder.AnchorPoint = Vector2.new(0.5, 1)   -- bottom edge stays put when squashing
+    holder.Position = UDim2.new(0.5, 0, 1, 0)
+    holder.Size = UDim2.new(1, 0, 1, 0)
+    holder.BackgroundTransparency = 1
+    holder.BorderSizePixel = 0
+    holder.Parent = gui
+
     local sprite = Instance.new("ImageLabel")
     sprite.Name = "Sprite"
-    sprite.AnchorPoint = Vector2.new(0.5, 1)   -- bottom edge stays put when squashing
-    sprite.Position = UDim2.new(0.5, 0, 1, 0)
     sprite.Size = UDim2.new(1, 0, 1, 0)
     sprite.BackgroundTransparency = 1
     sprite.ImageColor3 = cfg.Tint
     sprite.ImageTransparency = cfg.Transparency
     if cfg.PixelArt then sprite.ResampleMode = Enum.ResamplerMode.Pixelated end
-    sprite.ZIndex = 2
+    sprite.ZIndex = 10
     sprite.Image = idle[1]
-    sprite.Parent = gui
+    sprite.Parent = holder
+
+    -- layers behind the sprite (all optional). each one is a copy of whatever frame is showing
+    local layers = {}
+    local function addLayer(dx, dy, scale, color, transparency, pulse)
+        transparency = math.clamp(transparency, 0, 1)
+        local l = Instance.new("ImageLabel")
+        l.Name = "Layer"
+        l.AnchorPoint = Vector2.new(0.5, 0.5)
+        l.Position = UDim2.new(0.5 + dx, 0, 0.5 + dy, 0)
+        l.Size = UDim2.new(scale, 0, scale, 0)
+        l.BackgroundTransparency = 1
+        l.Image = idle[1]
+        l.ImageColor3 = color
+        l.ImageTransparency = transparency
+        if cfg.PixelArt then l.ResampleMode = Enum.ResamplerMode.Pixelated end
+        l.ZIndex = 1 + #layers -- later layers sit on top of earlier ones, all under the sprite
+        l.Parent = holder
+        layers[#layers + 1] = {gui = l, base = transparency, pulse = pulse}
+    end
+    if cfg.AuraEffect then
+        addLayer(0, 0, 1 + cfg.AuraSize, cfg.AuraColor, cfg.AuraTransparency, cfg.AuraPulse)
+    end
+    if cfg.ShadowEffect then
+        addLayer(cfg.ShadowOffsetX, cfg.ShadowOffsetY, 1, cfg.ShadowColor, cfg.ShadowTransparency)
+    end
+    if cfg.OutlineEffect then
+        local t = cfg.OutlineThickness
+        for i = 0, 7 do
+            local a = i / 8 * math.pi * 2
+            addLayer(math.cos(a) * t, math.sin(a) * t, 1, cfg.OutlineColor, 0)
+        end
+    end
+    if cfg.RGBSplit then
+        local o = cfg.RGBSplitAmount
+        addLayer(-o, 0, 1, Color3.fromRGB(255, 40, 40), 0.45)
+        addLayer(o, 0, 1, Color3.fromRGB(40, 220, 255), 0.45)
+    end
 
     -- preload (non-blocking: some executors hang PreloadAsync on custom files)
     local preloadFolder = Instance.new("Folder")
@@ -946,7 +1052,7 @@ function Brain.Run(userCfg)
                     em.LightEmission = cfg.AfterimageLightEmission
                     em.LightInfluence = cfg.LightInfluence
                     em.ZOffset = cfg.AfterimageZOffset -- layering by render depth, no physical offset
-                    em.Lifetime = NumberRange.new(cfg.AfterimageFadeTime)
+                    em.Lifetime = NumberRange.new(cfg.AfterimageFadeTime, cfg.AfterimageFadeTime)
                     em.Color = ColorSequence.new(currentColor)
                     em.Transparency = NumberSequence.new(cfg.AfterimageTransparency, 1)
                     em.Size = NumberSequence.new({
@@ -969,20 +1075,21 @@ function Brain.Run(userCfg)
         if not em then return end
 
         local now = os.clock()
-        local life = cfg.AfterimageFadeTime * (moving and 1 or 1.33)
 
         -- cap how many ghosts are alive at once
-        while emitTimes[1] and emitTimes[1] < now - cfg.AfterimageFadeTime * 1.33 do
+        while emitTimes[1] and emitTimes[1] < now - cfg.AfterimageFadeTime do
             table.remove(emitTimes, 1)
         end
         if #emitTimes >= cfg.AfterimageMax then return end
         emitTimes[#emitTimes + 1] = now
 
-        -- spawn exactly at the sprite's center. ghosts sit behind the sprite through the
-        -- emitter's ZOffset (render depth), not by moving where they spawn
-        trailPart.CFrame = CFrame.new(root.Position + Vector3.new(0, cfg.studsOffsetY + hoverOffset, 0))
+        -- spawn exactly at the sprite's center. BillboardGui.StudsOffset is camera-relative, so the
+        -- same camera-relative offset is used here (TBB turns an attachment to face the camera every
+        -- frame for this). ghosts sit behind the sprite through the emitter's ZOffset (render depth)
+        local cam = workspace.CurrentCamera
+        local up = Vector3.new(0, cfg.studsOffsetY + hoverOffset, 0)
+        trailPart.CFrame = CFrame.new(root.Position + (cam and cam.CFrame:VectorToWorldSpace(up) or up))
 
-        em.Lifetime = NumberRange.new(life)
         if cfg.RainbowKeyframeColor then em.Color = ColorSequence.new(currentColor) end
         em:Emit(1)
     end
@@ -1140,6 +1247,125 @@ function Brain.Run(userCfg)
         end)
     end
 
+    -- orbs (optional): balls / fire / smoke / sparkles / images circling you. client-side only
+    local orbHolder
+    local orbs = {}
+    if #orbSpecs > 0 then
+        orbHolder = Instance.new("Folder")
+        orbHolder.Name = "SkinBrainOrbs"
+        orbHolder.Parent = workspace
+
+        local function makeOrbEmitter(kind, size, color, textureOverride)
+            local em = Instance.new("ParticleEmitter")
+            em.LockedToPart = false -- flames/sparks trail behind the orb as it moves
+            em.Orientation = Enum.ParticleOrientation.FacingCamera
+            em.Rotation = NumberRange.new(0, 360)
+            if kind == "fire" then
+                em.Texture = textureOverride or "rbxasset://textures/particles/fire_main.dds"
+                em.Rate = 40
+                em.Lifetime = NumberRange.new(0.35, 0.7)
+                em.Speed = NumberRange.new(1, 3)
+                em.SpreadAngle = Vector2.new(20, 20)
+                em.Acceleration = Vector3.new(0, 6, 0)
+                em.LightEmission = 1
+                em.Size = NumberSequence.new({
+                    NumberSequenceKeypoint.new(0, size * 0.9), NumberSequenceKeypoint.new(1, 0)})
+                em.Transparency = NumberSequence.new({
+                    NumberSequenceKeypoint.new(0, 0.2), NumberSequenceKeypoint.new(1, 1)})
+                em.Color = ColorSequence.new({
+                    ColorSequenceKeypoint.new(0, color:Lerp(Color3.new(1, 1, 1), 0.4)),
+                    ColorSequenceKeypoint.new(0.6, color),
+                    ColorSequenceKeypoint.new(1, color:Lerp(Color3.new(0, 0, 0), 0.6)),
+                })
+            elseif kind == "smoke" then
+                em.Texture = textureOverride or "rbxasset://textures/particles/smoke_main.dds"
+                em.Rate = 14
+                em.Lifetime = NumberRange.new(1.2, 2)
+                em.Speed = NumberRange.new(0.5, 1.5)
+                em.SpreadAngle = Vector2.new(25, 25)
+                em.Acceleration = Vector3.new(0, 2, 0)
+                em.LightEmission = 0
+                em.Size = NumberSequence.new({
+                    NumberSequenceKeypoint.new(0, size * 0.6), NumberSequenceKeypoint.new(1, size * 1.8)})
+                em.Transparency = NumberSequence.new({
+                    NumberSequenceKeypoint.new(0, 0.5), NumberSequenceKeypoint.new(1, 1)})
+                em.Color = ColorSequence.new(color)
+            else -- sparkles
+                em.Texture = textureOverride or "rbxasset://textures/particles/sparkles_main.dds"
+                em.Rate = 25
+                em.Lifetime = NumberRange.new(0.4, 0.9)
+                em.Speed = NumberRange.new(2, 5)
+                em.SpreadAngle = Vector2.new(180, 180)
+                em.Acceleration = Vector3.new(0, 0, 0)
+                em.RotSpeed = NumberRange.new(-90, 90)
+                em.LightEmission = 1
+                em.Size = NumberSequence.new({
+                    NumberSequenceKeypoint.new(0, size * 0.35), NumberSequenceKeypoint.new(1, 0)})
+                em.Transparency = NumberSequence.new({
+                    NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(1, 1)})
+                em.Color = ColorSequence.new(color)
+            end
+            return em
+        end
+
+        for _, spec in ipairs(orbSpecs) do
+            local size = math.max(spec.Size, 0.1)
+            local part = Instance.new("Part")
+            part.Name = "Orb"
+            part.Anchored = true
+            part.CanCollide = false
+            part.CanQuery = false
+            part.CanTouch = false
+            part.CastShadow = false
+            part.Size = Vector3.new(size, size, size)
+            part.CFrame = root.CFrame
+            part.Transparency = 1
+
+            local orb = {part = part, spec = spec, phase = spec.phase}
+            local ok = true
+
+            if spec.Type == "ball" then
+                part.Shape = Enum.PartType.Ball
+                part.Material = Enum.Material.Neon
+                part.Color = spec.Color
+                part.Transparency = math.clamp(spec.Transparency, 0, 1)
+            elseif spec.Type == "fire" or spec.Type == "smoke" or spec.Type == "sparkles" then
+                makeOrbEmitter(spec.Type, size, spec.Color, spec.texture).Parent = part
+            elseif spec.Type == "image" then
+                if #spec.frames == 0 then
+                    warn(TAG .. "an image orb has no usable Image, skipping it")
+                    ok = false
+                else
+                    local bb = Instance.new("BillboardGui")
+                    bb.Size = UDim2.new(size, 0, size, 0)
+                    bb.AlwaysOnTop = false
+                    bb.LightInfluence = cfg.LightInfluence
+                    bb.Parent = part
+                    local img = Instance.new("ImageLabel")
+                    img.Size = UDim2.new(1, 0, 1, 0)
+                    img.BackgroundTransparency = 1
+                    img.Image = spec.frames[1]
+                    img.ImageColor3 = spec.ImageColor or Color3.new(1, 1, 1)
+                    img.ImageTransparency = math.clamp(spec.Transparency, 0, 1)
+                    if cfg.PixelArt then img.ResampleMode = Enum.ResamplerMode.Pixelated end
+                    img.Parent = bb
+                    orb.img = img
+                    orb.frames = spec.frames
+                end
+            else
+                warn(TAG .. "unknown orb Type '" .. tostring(spec.Type) .. "' (use Ball, Fire, Smoke, Sparkles or Image)")
+                ok = false
+            end
+
+            if ok then
+                part.Parent = orbHolder
+                orbs[#orbs + 1] = orb
+            else
+                part:Destroy()
+            end
+        end
+    end
+
     -- main loop
     local walkSpeed = cfg.WalkFrameSwitchSpeed or 0.125 -- 0.125 == math.floor(walkTime * 8) % 2
     local walkTime, idleTime = 0, 0
@@ -1151,6 +1377,7 @@ function Brain.Run(userCfg)
     local transformActive = cfg.FrameJiggle or cfg.GlitchEffect or cfg.WobbleEffect
         or cfg.HoverBob or cfg.BreathEffect or cfg.BoilEffect
     local alphaActive = cfg.GhostPulse or cfg.FlickerEffect
+    local hasLayerPulse = cfg.AuraEffect and cfg.AuraPulse
     local amp = {wobble = 0, hover = 0, breath = 0}
     local boil = {rot = 0, x = 0, y = 0}
     local nextBoil, flickerUntil, lastAlpha = 0, 0, -1
@@ -1198,6 +1425,7 @@ function Brain.Run(userCfg)
         if tex ~= activeTexture then
             activeTexture = tex
             sprite.Image = tex
+            for i = 1, #layers do layers[i].gui.Image = tex end
         end
 
         -- rainbow (multiplied by Tint)
@@ -1268,13 +1496,14 @@ function Brain.Run(userCfg)
                 hoverOffset = math.sin(now * cfg.HoverSpeed * 6.2832) * cfg.HoverHeight * amp.hover
             end
 
-            sprite.Rotation = rot
-            sprite.Size = UDim2.new(glitch.scale, 0, glitch.scale * scaleY, 0)
-            sprite.Position = UDim2.new(0.5 + boil.x, 0, 1 + boil.y, 0)
+            holder.Rotation = rot
+            holder.Size = UDim2.new(glitch.scale, 0, glitch.scale * scaleY, 0)
+            holder.Position = UDim2.new(0.5 + boil.x, 0, 1 + boil.y, 0)
             gui.StudsOffset = Vector3.new(glitch.x, cfg.studsOffsetY + glitch.y + hoverOffset, glitch.z)
         end
 
         -- visibility effects: ghost pulse / flicker combine into one transparency
+        local visNow = 1
         if alphaActive then
             local vis = 1
             if cfg.GhostPulse then
@@ -1289,6 +1518,7 @@ function Brain.Run(userCfg)
                     vis *= 1 - math.clamp(cfg.FlickerDepth, 0, 1)
                 end
             end
+            visNow = vis
             local tr = 1 - (1 - cfg.Transparency) * vis
             if math.abs(tr - lastAlpha) > 0.002 then
                 lastAlpha = tr
@@ -1296,9 +1526,40 @@ function Brain.Run(userCfg)
             end
         end
 
+        -- billboard layers follow ghost pulse / flicker, and the aura can breathe
+        if #layers > 0 and (alphaActive or hasLayerPulse) then
+            local wave = (math.sin(now * cfg.AuraPulseSpeed * 6.2832) + 1) / 2
+            for i = 1, #layers do
+                local l = layers[i]
+                local base = l.base
+                if l.pulse then base = base + (wave - 0.5) * 0.3 end
+                l.gui.ImageTransparency = 1 - (1 - math.clamp(base, 0, 1)) * visNow
+            end
+        end
+
+        -- orbs circle you (world axes, so they don't turn when you turn)
+        if #orbs > 0 then
+            local center = root.Position
+            for i = 1, #orbs do
+                local o = orbs[i]
+                local sp = o.spec
+                local a = o.phase + now * sp.Speed * 6.2832
+                local offset = Vector3.new(math.cos(a) * sp.Distance, 0, math.sin(a) * sp.Distance)
+                if sp.Tilt ~= 0 then
+                    offset = CFrame.Angles(math.rad(sp.Tilt), 0, 0):VectorToWorldSpace(offset)
+                end
+                local bob = 0
+                if sp.Bob ~= 0 then bob = math.sin(now * sp.BobSpeed * 6.2832 + o.phase) * sp.Bob end
+                o.part.CFrame = CFrame.new(center + offset + Vector3.new(0, sp.Height + bob, 0))
+                if o.frames and #o.frames > 1 then
+                    o.img.Image = o.frames[math.floor(now / math.max(sp.ImageFrameSpeed, 0.02)) % #o.frames + 1]
+                end
+            end
+        end
+
         -- afterimages
         if cfg.AfterimageEffect then
-            local rate = moving and cfg.AfterimageWalkRate or cfg.AfterimageIdleRate
+            local rate = cfg.AfterimageRate
             if now - lastTrail >= rate then
                 lastTrail = now
                 spawnAfterimage(activeTexture, moving)
@@ -1355,6 +1616,7 @@ function Brain.Run(userCfg)
         end
         gui:Destroy()
         if trailHolder then trailHolder:Destroy() end
+        if orbHolder then orbHolder:Destroy() end
         wipeDownloads()
         if env.__SkinBrainCleanup == destroy then env.__SkinBrainCleanup = nil end
     end
