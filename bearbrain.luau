@@ -1,4 +1,4 @@
--- SkinBrain v2.2
+-- SkinBrain v2.5
 -- the boring work: downloads/caching, frame logic, billboard, effects, cleanup.
 -- you never need to edit this. all settings live in SkinTemplate.lua.
 -- host it (github raw link) or put it in your executor's workspace as "SkinBrain.lua".
@@ -9,7 +9,7 @@ local ContentProvider = game:GetService("ContentProvider")
 
 local env = (getgenv and getgenv()) or _G
 local TAG = "[SkinBrain] "
-local Brain = {Version = "2.2"}
+local Brain = {Version = "2.5"}
 
 -- --- DEFAULTS ---
 local DEFAULTS = {
@@ -93,19 +93,13 @@ local DEFAULTS = {
     ShadowColor = Color3.new(0, 0, 0),
     ShadowTransparency = 0.55,
 
-    OutlineEffect = false,         -- colored outline around the sprite's shape
-    OutlineColor = Color3.new(1, 1, 1),
-    OutlineThickness = 0.025,      -- fraction of the sprite size
-
-    AuraEffect = false,            -- soft colored halo behind the sprite
-    AuraColor = Color3.fromRGB(255, 170, 255),
-    AuraSize = 0.12,               -- how much bigger than the sprite
-    AuraTransparency = 0.6,
-    AuraPulse = false,             -- breathes in and out
-    AuraPulseSpeed = 0.5,
-
     RGBSplit = false,              -- red/blue color-split copies either side of the sprite
     RGBSplitAmount = 0.03,         -- fraction of the sprite size
+
+    -- global color correction, applied to every color setting (Tint, shadow/outline/aura, orbs, light).
+    -- 1 = off. if colors come out more saturated/brighter than the one you picked, lower these
+    ColorSaturation = 1,           -- e.g. 0.6 = 40% less saturated
+    ColorBrightness = 1,           -- e.g. 0.9 = 10% darker
 
     -- downloads / logging
     ForceRedownload = false,
@@ -121,6 +115,15 @@ local DEFAULTS = {
 -- settings that are allowed to be nil (so they aren't flagged as typos)
 local OPTIONAL = {WalkFrameSwitchSpeed = true, ThemeSound = true, PointLightModifier = true,
     VoiceLines = true, StompSound = true, OrbOrbit = true}
+
+-- scales a color's saturation/brightness (see ColorSaturation / ColorBrightness)
+local function fixColor(c, cfg)
+    if typeof(c) ~= "Color3" then return c end
+    local sat, bri = cfg.ColorSaturation or 1, cfg.ColorBrightness or 1
+    if sat == 1 and bri == 1 then return c end
+    local h, sv, v = c:ToHSV()
+    return Color3.fromHSV(h, math.clamp(sv * sat, 0, 1), math.clamp(v * bri, 0, 1))
+end
 
 local function buildConfig(user)
     local cfg = {}
@@ -145,6 +148,10 @@ local function buildConfig(user)
     cfg.AfterimageSizeScale = math.max(cfg.AfterimageSizeScale, 0.05)
     cfg.AfterimageLightEmission = math.clamp(cfg.AfterimageLightEmission, 0, 1)
     cfg.GhostPulseMin = math.clamp(cfg.GhostPulseMin, 0, 1)
+    cfg.ColorSaturation = math.max(cfg.ColorSaturation, 0)
+    cfg.ColorBrightness = math.max(cfg.ColorBrightness, 0)
+    cfg.Tint = fixColor(cfg.Tint, cfg)
+    cfg.ShadowColor = fixColor(cfg.ShadowColor, cfg)
     if cfg.WalkFrameSwitchSpeed ~= nil and type(cfg.WalkFrameSwitchSpeed) ~= "number" then
         warn(TAG .. "WalkFrameSwitchSpeed should be a number or nil, using the default")
         cfg.WalkFrameSwitchSpeed = nil
@@ -839,6 +846,9 @@ function Brain.Run(userCfg)
                 for k, v in pairs(entries[i]) do spec[k] = v end
             end
             spec.Type = tostring(spec.Type):lower()
+            spec.Color = fixColor(spec.Color, cfg)
+            if spec.SecondaryColor then spec.SecondaryColor = fixColor(spec.SecondaryColor, cfg) end
+            if spec.ImageColor then spec.ImageColor = fixColor(spec.ImageColor, cfg) end
             spec.phase = spec.Phase and math.rad(spec.Phase) or ((i - 1) / n * math.pi * 2)
             if spec.Type == "image" then spec.imageSrc = collect(spec.Image, "image") end
             if spec.Texture then spec.textureSrc = collect(spec.Texture, "image") end
@@ -927,7 +937,7 @@ function Brain.Run(userCfg)
 
     -- layers behind the sprite (all optional). each one is a copy of whatever frame is showing
     local layers = {}
-    local function addLayer(dx, dy, scale, color, transparency, pulse)
+    local function addLayer(dx, dy, scale, color, transparency)
         transparency = math.clamp(transparency, 0, 1)
         local l = Instance.new("ImageLabel")
         l.Name = "Layer"
@@ -941,20 +951,10 @@ function Brain.Run(userCfg)
         if cfg.PixelArt then l.ResampleMode = Enum.ResamplerMode.Pixelated end
         l.ZIndex = 1 + #layers -- later layers sit on top of earlier ones, all under the sprite
         l.Parent = holder
-        layers[#layers + 1] = {gui = l, base = transparency, pulse = pulse}
-    end
-    if cfg.AuraEffect then
-        addLayer(0, 0, 1 + cfg.AuraSize, cfg.AuraColor, cfg.AuraTransparency, cfg.AuraPulse)
+        layers[#layers + 1] = {gui = l, base = transparency}
     end
     if cfg.ShadowEffect then
         addLayer(cfg.ShadowOffsetX, cfg.ShadowOffsetY, 1, cfg.ShadowColor, cfg.ShadowTransparency)
-    end
-    if cfg.OutlineEffect then
-        local t = cfg.OutlineThickness
-        for i = 0, 7 do
-            local a = i / 8 * math.pi * 2
-            addLayer(math.cos(a) * t, math.sin(a) * t, 1, cfg.OutlineColor, 0)
-        end
     end
     if cfg.RGBSplit then
         local o = cfg.RGBSplitAmount
@@ -1213,6 +1213,7 @@ function Brain.Run(userCfg)
     -- and keeps watching in case the game removes/recreates the light
     local pl = type(cfg.PointLightModifier) == "table" and cfg.PointLightModifier or nil
     local lightRef, lightOriginal
+    local plColor = (pl and pl.Color) and fixColor(pl.Color, cfg) or nil
     if pl and pl.Enabled then
         local function findLight()
             local head = char:FindFirstChild("Head")
@@ -1325,11 +1326,41 @@ function Brain.Run(userCfg)
             local ok = true
 
             if spec.Type == "ball" then
-                part.Shape = Enum.PartType.Ball
-                part.Material = Enum.Material.Neon
-                part.Color = spec.Color
-                part.Transparency = math.clamp(spec.Transparency, 0, 1)
+                if tostring(spec.Material or ""):lower() == "flat" then
+                    -- an unlit flat circle: shows exactly the color you picked (no glow, no lighting)
+                    part.Transparency = 1
+                    local bb = Instance.new("BillboardGui")
+                    bb.Size = UDim2.new(size, 0, size, 0)
+                    bb.AlwaysOnTop = false
+                    bb.LightInfluence = 0
+                    bb.Parent = part
+                    local dot = Instance.new("Frame")
+                    dot.Size = UDim2.new(1, 0, 1, 0)
+                    dot.BorderSizePixel = 0
+                    dot.BackgroundColor3 = spec.Color
+                    dot.BackgroundTransparency = math.clamp(spec.Transparency, 0, 1)
+                    dot.Parent = bb
+                    local corner = Instance.new("UICorner")
+                    corner.CornerRadius = UDim.new(0.5, 0)
+                    corner.Parent = dot
+                else
+                    part.Shape = Enum.PartType.Ball
+                    local okMat, mat = pcall(function() return Enum.Material[spec.Material or "Neon"] end)
+                    part.Material = (okMat and mat) or Enum.Material.Neon
+                    part.Color = spec.Color
+                    part.Transparency = math.clamp(spec.Transparency, 0, 1)
+                end
+            elseif spec.Type == "fire" and not spec.texture then
+                -- the classic Fire object takes its two colors directly. (the particle fire texture is
+                -- itself orange, so a pale color you pick always came out saturated and bright)
+                local fire = Instance.new("Fire")
+                fire.Color = spec.Color
+                fire.SecondaryColor = spec.SecondaryColor or spec.Color -- otherwise the default orange mixes in
+                fire.Heat = spec.Heat or 9
+                fire.Size = math.clamp(spec.FireSize or size * 2.5, 2, 30)
+                fire.Parent = part
             elseif spec.Type == "fire" or spec.Type == "smoke" or spec.Type == "sparkles" then
+                -- (fire only lands here when you gave the orb your own flame Texture)
                 makeOrbEmitter(spec.Type, size, spec.Color, spec.texture).Parent = part
             elseif spec.Type == "image" then
                 if #spec.frames == 0 then
@@ -1377,7 +1408,6 @@ function Brain.Run(userCfg)
     local transformActive = cfg.FrameJiggle or cfg.GlitchEffect or cfg.WobbleEffect
         or cfg.HoverBob or cfg.BreathEffect or cfg.BoilEffect
     local alphaActive = cfg.GhostPulse or cfg.FlickerEffect
-    local hasLayerPulse = cfg.AuraEffect and cfg.AuraPulse
     local amp = {wobble = 0, hover = 0, breath = 0}
     local boil = {rot = 0, x = 0, y = 0}
     local nextBoil, flickerUntil, lastAlpha = 0, 0, -1
@@ -1431,7 +1461,7 @@ function Brain.Run(userCfg)
         -- rainbow (multiplied by Tint)
         if cfg.RainbowKeyframeColor then
             local hue = (now / math.max(cfg.RainbowSpeed, 0.05)) % 1
-            currentColor = mulColor(Color3.fromHSV(hue, 1, 1), cfg.Tint)
+            currentColor = mulColor(fixColor(Color3.fromHSV(hue, 1, 1), cfg), cfg.Tint)
             sprite.ImageColor3 = currentColor
         end
 
@@ -1526,14 +1556,11 @@ function Brain.Run(userCfg)
             end
         end
 
-        -- billboard layers follow ghost pulse / flicker, and the aura can breathe
-        if #layers > 0 and (alphaActive or hasLayerPulse) then
-            local wave = (math.sin(now * cfg.AuraPulseSpeed * 6.2832) + 1) / 2
+        -- billboard layers follow ghost pulse / flicker
+        if #layers > 0 and alphaActive then
             for i = 1, #layers do
                 local l = layers[i]
-                local base = l.base
-                if l.pulse then base = base + (wave - 0.5) * 0.3 end
-                l.gui.ImageTransparency = 1 - (1 - math.clamp(base, 0, 1)) * visNow
+                l.gui.ImageTransparency = 1 - (1 - l.base) * visNow
             end
         end
 
@@ -1570,8 +1597,8 @@ function Brain.Run(userCfg)
         if lightRef and pl then
             if pl.FollowSkinColor then
                 lightRef.Color = currentColor
-            elseif pl.Color and lightRef.Color ~= pl.Color then
-                lightRef.Color = pl.Color
+            elseif plColor and lightRef.Color ~= plColor then
+                lightRef.Color = plColor
             end
             if pl.Brightness and lightRef.Brightness ~= pl.Brightness then lightRef.Brightness = pl.Brightness end
             if pl.Range and lightRef.Range ~= pl.Range then lightRef.Range = pl.Range end
