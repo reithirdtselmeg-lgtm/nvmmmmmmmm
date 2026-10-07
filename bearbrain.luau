@@ -1,4 +1,4 @@
--- SkinBrain v2.5
+-- SkinBrain v2.6
 -- the boring work: downloads/caching, frame logic, billboard, effects, cleanup.
 -- you never need to edit this. all settings live in SkinTemplate.lua.
 -- host it (github raw link) or put it in your executor's workspace as "SkinBrain.lua".
@@ -9,7 +9,7 @@ local ContentProvider = game:GetService("ContentProvider")
 
 local env = (getgenv and getgenv()) or _G
 local TAG = "[SkinBrain] "
-local Brain = {Version = "2.5"}
+local Brain = {Version = "2.6"}
 
 -- --- DEFAULTS ---
 local DEFAULTS = {
@@ -845,6 +845,8 @@ function Brain.Run(userCfg)
             if entries then
                 for k, v in pairs(entries[i]) do spec[k] = v end
             end
+            local entry = entries and entries[i] or {}
+            spec.fireColor = entry.FireColor or entry.Color or shared.FireColor
             spec.Type = tostring(spec.Type):lower()
             spec.Color = fixColor(spec.Color, cfg)
             if spec.SecondaryColor then spec.SecondaryColor = fixColor(spec.SecondaryColor, cfg) end
@@ -1354,10 +1356,15 @@ function Brain.Run(userCfg)
                 -- the classic Fire object takes its two colors directly. (the particle fire texture is
                 -- itself orange, so a pale color you pick always came out saturated and bright)
                 local fire = Instance.new("Fire")
-                fire.Color = spec.Color
-                fire.SecondaryColor = spec.SecondaryColor or spec.Color -- otherwise the default orange mixes in
+                -- unless you pick colors, fire gets the same colors Roblox gives a brand new Fire:
+                -- orange outer flames (236,139,70) and brown inner flames (139,80,55)
+                fire.Color = fixColor(spec.fireColor or Color3.fromRGB(236, 139, 70), cfg)
+                fire.SecondaryColor = spec.SecondaryColor or fixColor(Color3.fromRGB(139, 80, 55), cfg)
                 fire.Heat = spec.Heat or 9
                 fire.Size = math.clamp(spec.FireSize or size * 2.5, 2, 30)
+                -- Fire has no particle-count setting. TimeScale is its only speed control, and it only goes
+                -- from frozen (0) up to normal speed (1)
+                if spec.FireRate then fire.TimeScale = math.clamp(spec.FireRate, 0, 1) end
                 fire.Parent = part
             elseif spec.Type == "fire" or spec.Type == "smoke" or spec.Type == "sparkles" then
                 -- (fire only lands here when you gave the orb your own flame Texture)
