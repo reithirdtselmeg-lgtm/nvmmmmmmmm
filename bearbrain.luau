@@ -107,8 +107,8 @@ local DEFAULTS = {
     DownloadRetries = 2,
     AllowUnsupportedFormats = true, -- try webp/gif anyway if a link only gives those (roblox may not draw them)
     ConvertGifs = true,            -- gif links are split into png frames automatically (roblox can't play gifs)
-    GifMaxFrames = 60,             -- gifs longer than this are cut off
-    GifMaxSize = 400,              -- gifs wider/taller than this (pixels) are refused, shrink them first
+    GifMaxFrames = 90,             -- gifs longer than this are cut off
+    GifMaxSize = 780,              -- gifs wider/taller than this (pixels) are refused, shrink them first
     DeleteDownloadsOnRemove = false, -- true = delete the downloaded files when the skin is removed (reset/respawn)
     Debug = true,                  -- false = only print problems
 }
