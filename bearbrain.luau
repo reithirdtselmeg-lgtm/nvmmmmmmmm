@@ -196,7 +196,7 @@ local function hash(s)
 end
 
 local IMAGE_EXTS = {"png", "jpg", "webp", "gif"}
-local AUDIO_EXTS = {"mp3", "ogg"}
+local AUDIO_EXTS = {"mp3", "ogg", "wav", "flac"}
 
 -- headers that make sites (wikis/cdns) hand over the plain png instead of webp or a block page
 local HEADERS = {
@@ -204,25 +204,79 @@ local HEADERS = {
     ["Accept"] = "image/png,image/jpeg,audio/mpeg,audio/ogg,*/*;q=0.5",
 }
 
--- detect the REAL file type from the bytes (links often lie about their extension)
+-- detect the REAL file type from the bytes
+-- links often lie about their extension
 local function sniff(body)
-    local b1, b2 = body:byte(1, 2)
-    if body:sub(2, 4) == "PNG" then return "png" end
-    if b1 == 0xFF and b2 == 0xD8 then return "jpg" end
-    if body:sub(1, 3) == "GIF" then return "gif" end
+    if type(body) ~= "string" or #body < 4 then
+        return nil
+    end
+
+    -- PNG
+    if body:sub(1, 8) == "\137PNG\r\n\26\n" then
+        return "png"
+    end
+
+    -- JPEG
+    if body:sub(1, 3) == "\255\216\255" then
+        return "jpg"
+    end
+
+    -- GIF
+    local gif = body:sub(1, 6)
+    if gif == "GIF87a" or gif == "GIF89a" then
+        return "gif"
+    end
+
+    -- OGG
+    if body:sub(1, 4) == "OggS" then
+        return "ogg"
+    end
+
+    -- FLAC
+    if body:sub(1, 4) == "fLaC" then
+        return "flac"
+    end
+
+    -- RIFF containers
     if body:sub(1, 4) == "RIFF" then
         local kind = body:sub(9, 12)
-        if kind == "WEBP" then return "webp" end
-        if kind == "WAVE" then return "wav" end
+
+        -- WebP
+        if kind == "WEBP" then
+            return "webp"
+        end
+
+        -- WAV
+        if kind == "WAVE" then
+            return "wav"
+        end
     end
-    if body:sub(1, 4) == "OggS" then return "ogg" end
-    if body:sub(1, 3) == "ID3" or (b1 == 0xFF and b2 and b2 >= 0xE0) then return "mp3" end
+
+    -- MP3 with ID3 metadata
+    if body:sub(1, 3) == "ID3" then
+        return "mp3"
+    end
+
+    -- MP3 frame header without ID3
+    local b1, b2 = body:byte(1, 2)
+    if b1 == 0xFF and b2 then
+        local sync = b2 >= 0xE0
+        if sync then
+            return "mp3"
+        end
+    end
+
     return nil
 end
 
 -- formats roblox definitely supports
 local function good(kind, ext, cfg)
-    if kind == "audio" then return ext == "mp3" or ext == "ogg" end
+    if kind == "audio" then
+    return ext == "mp3"
+        or ext == "ogg"
+        or ext == "wav"
+        or ext == "flac"
+end
     if ext == "gif" and cfg and cfg.ConvertGifs then return true end -- we split gifs into png frames
     return ext == "png" or ext == "jpg"
 end
