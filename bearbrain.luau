@@ -1,4 +1,4 @@
--- SkinBrain v2.6
+-- SkinBrain v2.7
 -- the boring work: downloads/caching, frame logic, billboard, effects, cleanup.
 -- you never need to edit this. all settings live in SkinTemplate.lua.
 -- host it (github raw link) or put it in your executor's workspace as "SkinBrain.lua".
@@ -9,7 +9,7 @@ local ContentProvider = game:GetService("ContentProvider")
 
 local env = (getgenv and getgenv()) or _G
 local TAG = "[SkinBrain] "
-local Brain = {Version = "2.6"}
+local Brain = {Version = "2.7"}
 
 -- --- DEFAULTS ---
 local DEFAULTS = {
@@ -1355,17 +1355,31 @@ function Brain.Run(userCfg)
             elseif spec.Type == "fire" and not spec.texture then
                 -- the classic Fire object takes its two colors directly. (the particle fire texture is
                 -- itself orange, so a pale color you pick always came out saturated and bright)
-                local fire = Instance.new("Fire")
                 -- unless you pick colors, fire gets the same colors Roblox gives a brand new Fire:
                 -- orange outer flames (236,139,70) and brown inner flames (139,80,55)
-                fire.Color = fixColor(spec.fireColor or Color3.fromRGB(236, 139, 70), cfg)
-                fire.SecondaryColor = spec.SecondaryColor or fixColor(Color3.fromRGB(139, 80, 55), cfg)
-                fire.Heat = spec.Heat or 9
-                fire.Size = math.clamp(spec.FireSize or size * 2.5, 2, 30)
-                -- Fire has no particle-count setting. TimeScale is its only speed control, and it only goes
-                -- from frozen (0) up to normal speed (1)
-                if spec.FireRate then fire.TimeScale = math.clamp(spec.FireRate, 0, 1) end
-                fire.Parent = part
+                local fireColor = fixColor(spec.fireColor or Color3.fromRGB(236, 139, 70), cfg)
+                local fireColor2 = spec.SecondaryColor or fixColor(Color3.fromRGB(139, 80, 55), cfg)
+
+                -- FireRate works like a particle emitter's Rate: 1 = normal, 2 = twice as many flames,
+                -- 0.5 = half as many. the Fire object has no Rate of its own, so above 1 extra Fire objects
+                -- are stacked, and a fraction is done by switching a Fire on and off very fast
+                local rate = math.clamp(spec.FireRate or 1, 0, 10)
+                local copies = math.max(1, math.ceil(rate))
+                orb.fires = {}
+                for i = 1, copies do
+                    local fire = Instance.new("Fire")
+                    fire.Color = fireColor
+                    fire.SecondaryColor = fireColor2
+                    fire.Heat = spec.Heat or 9
+                    fire.Size = math.clamp(spec.FireSize or size * 2.5, 2, 30)
+                    fire.Parent = part
+                    local duty = math.clamp(rate - (i - 1), 0, 1)
+                    if duty < 1 then
+                        orb.fires[#orb.fires + 1] = {fire = fire, duty = duty}
+                        fire.Enabled = duty > 0
+                    end
+                end
+                if #orb.fires == 0 then orb.fires = nil end
             elseif spec.Type == "fire" or spec.Type == "smoke" or spec.Type == "sparkles" then
                 -- (fire only lands here when you gave the orb your own flame Texture)
                 makeOrbEmitter(spec.Type, size, spec.Color, spec.texture).Parent = part
@@ -1585,6 +1599,15 @@ function Brain.Run(userCfg)
                 local bob = 0
                 if sp.Bob ~= 0 then bob = math.sin(now * sp.BobSpeed * 6.2832 + o.phase) * sp.Bob end
                 o.part.CFrame = CFrame.new(center + offset + Vector3.new(0, sp.Height + bob, 0))
+                if o.fires then
+                    -- fractional FireRate: this Fire is only switched on for part of every 0.08s cycle
+                    local cycle = ((now + o.phase) % 0.08) / 0.08
+                    for j = 1, #o.fires do
+                        local f = o.fires[j]
+                        local on = cycle < f.duty
+                        if f.fire.Enabled ~= on then f.fire.Enabled = on end
+                    end
+                end
                 if o.frames and #o.frames > 1 then
                     o.img.Image = o.frames[math.floor(now / math.max(sp.ImageFrameSpeed, 0.02)) % #o.frames + 1]
                 end
