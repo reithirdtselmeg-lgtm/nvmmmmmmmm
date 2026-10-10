@@ -1,4 +1,4 @@
--- SkinBrain v2.7
+-- SkinBrain v2.8
 -- the boring work: downloads/caching, frame logic, billboard, effects, cleanup.
 -- you never need to edit this. all settings live in SkinTemplate.lua.
 -- host it (github raw link) or put it in your executor's workspace as "SkinBrain.lua".
@@ -9,7 +9,7 @@ local ContentProvider = game:GetService("ContentProvider")
 
 local env = (getgenv and getgenv()) or _G
 local TAG = "[SkinBrain] "
-local Brain = {Version = "2.7"}
+local Brain = {Version = "2.8"}
 
 -- --- DEFAULTS ---
 local DEFAULTS = {
@@ -40,6 +40,11 @@ local DEFAULTS = {
     FrameJiggle = false,
     FrameJiggleStrength = 0.03,    -- how much it squashes (0.12 = down to 88% height)
     FrameJiggleEase = 1.5,           -- 1 = even squash across the frame, higher = snaps right before the change
+    FrameSkipJiggle = {},          -- walk frame numbers (1 = first walk sprite) that do NOT trigger the jiggle. empty = none skipped
+
+    FrameJump = false,             -- a little visual hop on every walk frame (only the sprite moves, NOT a real jump)
+    FrameJumpHighestHeight = 1,    -- how high each hop goes, in studs
+    FrameSkipJump = {},            -- walk frame numbers (1 = first walk sprite) that do NOT hop. empty = none skipped
 
     GlitchEffect = false,
     GlitchStrength = 0.4,
@@ -107,8 +112,8 @@ local DEFAULTS = {
     DownloadRetries = 2,
     AllowUnsupportedFormats = true, -- try webp/gif anyway if a link only gives those (roblox may not draw them)
     ConvertGifs = true,            -- gif links are split into png frames automatically (roblox can't play gifs)
-    GifMaxFrames = 90,             -- gifs longer than this are cut off
-    GifMaxSize = 780,              -- gifs wider/taller than this (pixels) are refused, shrink them first
+    GifMaxFrames = 75,             -- gifs longer than this are cut off
+    GifMaxSize = 770,              -- gifs wider/taller than this (pixels) are refused, shrink them first
     DeleteDownloadsOnRemove = false, -- true = delete the downloaded files when the skin is removed (reset/respawn)
     Debug = true,                  -- false = only print problems
 }
@@ -148,6 +153,7 @@ local function buildConfig(user)
     cfg.AfterimageSizeScale = math.max(cfg.AfterimageSizeScale, 0.05)
     cfg.AfterimageLightEmission = math.clamp(cfg.AfterimageLightEmission, 0, 1)
     cfg.GhostPulseMin = math.clamp(cfg.GhostPulseMin, 0, 1)
+    cfg.FrameJumpHighestHeight = math.max(cfg.FrameJumpHighestHeight, 0)
     cfg.ColorSaturation = math.max(cfg.ColorSaturation, 0)
     cfg.ColorBrightness = math.max(cfg.ColorBrightness, 0)
     cfg.Tint = fixColor(cfg.Tint, cfg)
@@ -808,10 +814,27 @@ local function toList(v)
     return v
 end
 
+-- turns a skip list like {2, 4} into a lookup set. a missing/empty list skips nothing,
+-- and anything that isn't a positive number is ignored instead of erroring
+local function toIndexSet(v, name)
+    local set = {}
+    if v == nil then return set end
+    if type(v) == "number" then v = {v} end
+    if type(v) ~= "table" then
+        warn(TAG .. name .. " should be a list like {2, 4}, ignoring it")
+        return set
+    end
+    for _, x in ipairs(v) do
+        local n = tonumber(x)
+        if n and n >= 1 then set[math.floor(n)] = true end
+    end
+    return set
+end
+
 -- frame picker. cycle = ping-pong (1,2,3,2,1,2,3...) so no frame ever shows twice in a row
 local function pickFrame(frames, t, speed, cycle)
     local n = #frames
-    if n == 1 then return frames[1] end
+    if n == 1 then return frames[1], 1 end
     local step = math.floor(t / math.max(speed, 0.01))
     local idx
     if cycle and n > 2 then
@@ -821,7 +844,7 @@ local function pickFrame(frames, t, speed, cycle)
     else
         idx = (step % n) + 1
     end
-    return frames[idx]
+    return frames[idx], idx -- the picked sprite, and its number in the list (1 = first)
 end
 
 local function mulColor(a, b)
@@ -1061,6 +1084,7 @@ function Brain.Run(userCfg)
     local emitters, emitTimes = {}, {}
     local currentColor = cfg.Tint
     local hoverOffset = 0
+    local jumpOffset = 0 -- FrameJump's hop height, kept separate from hover so they just add together
 
     if cfg.AfterimageEffect then
         trailHolder = Instance.new("Folder")
@@ -1143,7 +1167,7 @@ function Brain.Run(userCfg)
         -- same camera-relative offset is used here (TBB turns an attachment to face the camera every
         -- frame for this). ghosts sit behind the sprite through the emitter's ZOffset (render depth)
         local cam = workspace.CurrentCamera
-        local up = Vector3.new(0, cfg.studsOffsetY + hoverOffset, 0)
+        local up = Vector3.new(0, cfg.studsOffsetY + hoverOffset + jumpOffset, 0)
         trailPart.CFrame = CFrame.new(root.Position + (cam and cam.CFrame:VectorToWorldSpace(up) or up))
 
         if cfg.RainbowKeyframeColor then em.Color = ColorSequence.new(currentColor) end
@@ -1481,11 +1505,17 @@ function Brain.Run(userCfg)
     local nextGlitch, lastTrail = 0, 0
 
     local transformActive = cfg.FrameJiggle or cfg.GlitchEffect or cfg.WobbleEffect
-        or cfg.HoverBob or cfg.BreathEffect or cfg.BoilEffect
+        or cfg.HoverBob or cfg.BreathEffect or cfg.BoilEffect or cfg.FrameJump
     local alphaActive = cfg.GhostPulse or cfg.FlickerEffect
     local amp = {wobble = 0, hover = 0, breath = 0}
     local boil = {rot = 0, x = 0, y = 0}
     local nextBoil, flickerUntil, lastAlpha = 0, 0, -1
+
+    -- FrameSkipJump / FrameSkipJiggle: walk frame numbers to leave out. bad or empty lists skip nothing
+    local skipJump = toIndexSet(cfg.FrameSkipJump, "FrameSkipJump")
+    local skipJiggle = toIndexSet(cfg.FrameSkipJiggle, "FrameSkipJiggle")
+    local jumpY = 0
+    local jiggleEasing = false
 
     local function step(dt)
         local now = os.clock()
@@ -1521,9 +1551,9 @@ function Brain.Run(userCfg)
         end
 
         -- frames
-        local tex
+        local tex, walkIdx
         if moving then
-            tex = pickFrame(walk, walkTime, walkSpeed, cfg.WalkFrameCycle)
+            tex, walkIdx = pickFrame(walk, walkTime, walkSpeed, cfg.WalkFrameCycle)
         else
             tex = pickFrame(idle, idleTime, cfg.IdleFrameSwitchSpeed, cfg.IdleFrameCycle)
         end
@@ -1548,14 +1578,27 @@ function Brain.Run(userCfg)
                 local whole = math.floor(stepF)
                 local e = (stepF - whole) ^ math.max(cfg.FrameJiggleEase, 0.1)
                 local amt = cfg.FrameJiggleStrength
+                local target
                 if whole % 2 == 0 then
-                    squashY = 1 - amt * e          -- normal -> squashed
+                    target = 1 - amt * e           -- normal -> squashed
                 else
-                    squashY = 1 - amt * (1 - e)    -- squashed -> normal
+                    target = 1 - amt * (1 - e)     -- squashed -> normal
+                end
+                -- a frame listed in FrameSkipJiggle doesn't jiggle: the sprite eases back to normal for that
+                -- frame, then eases back into the cycle on the next eligible one (so it never pops).
+                -- the timing is still the walk frame timer. with an empty list this is exactly the old jiggle
+                local skipped = skipJiggle[walkIdx] == true
+                if skipped then target = 1 end
+                if skipped or jiggleEasing then
+                    squashY = squashY + (target - squashY) * math.min(1, dt * 18)
+                    jiggleEasing = skipped or math.abs(squashY - target) > 0.003
+                else
+                    squashY = target
                 end
             else
                 -- stopped walking: settle back to normal and stay there
                 squashY = squashY + (1 - squashY) * math.min(1, dt * 18)
+                jiggleEasing = false
             end
         end
 
@@ -1601,10 +1644,31 @@ function Brain.Run(userCfg)
                 hoverOffset = math.sin(now * cfg.HoverSpeed * 6.2832) * cfg.HoverHeight * amp.hover
             end
 
+            -- frame jump: every walk frame that isn't in FrameSkipJump gets one smooth hop (a parabola that
+            -- starts and ends at 0 across that frame's time slot), so hops follow the walk frame speed
+            -- exactly and always land back on the original position before the next one.
+            -- it's recomputed from the walk timer every frame (never accumulated) and only moves the sprite
+            if cfg.FrameJump then
+                if moving then
+                    local target = 0
+                    if not skipJump[walkIdx] then
+                        local stepF = walkTime / math.max(walkSpeed, 0.01)
+                        local p = stepF - math.floor(stepF)
+                        target = cfg.FrameJumpHighestHeight * 4 * p * (1 - p)
+                    end
+                    jumpY = target
+                else
+                    -- stopped walking: settle back to the original position
+                    jumpY = jumpY * (1 - math.min(1, dt * 18))
+                    if jumpY < 0.001 then jumpY = 0 end
+                end
+                jumpOffset = jumpY
+            end
+
             holder.Rotation = rot
             holder.Size = UDim2.new(glitch.scale, 0, glitch.scale * scaleY, 0)
             holder.Position = UDim2.new(0.5 + boil.x, 0, 1 + boil.y, 0)
-            gui.StudsOffset = Vector3.new(glitch.x, cfg.studsOffsetY + glitch.y + hoverOffset, glitch.z)
+            gui.StudsOffset = Vector3.new(glitch.x, cfg.studsOffsetY + glitch.y + hoverOffset + jumpOffset, glitch.z)
         end
 
         -- visibility effects: ghost pulse / flicker combine into one transparency
