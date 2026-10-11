@@ -1,4 +1,4 @@
--- SkinBrain v2.8
+-- SkinBrain v2.9
 -- the boring work: downloads/caching, frame logic, billboard, effects, cleanup.
 -- you never need to edit this. all settings live in SkinTemplate.lua.
 -- host it (github raw link) or put it in your executor's workspace as "SkinBrain.lua".
@@ -9,7 +9,7 @@ local ContentProvider = game:GetService("ContentProvider")
 
 local env = (getgenv and getgenv()) or _G
 local TAG = "[SkinBrain] "
-local Brain = {Version = "2.8"}
+local Brain = {Version = "2.9"}
 
 -- --- DEFAULTS ---
 local DEFAULTS = {
@@ -24,9 +24,9 @@ local DEFAULTS = {
     ScaleWalkWithSpeed = false,    -- walk animation speeds up/slows down with your real speed
 
     -- billboard
-    sizeX = 7,
-    sizeY = 7,
-    studsOffsetY = 0.25,
+    sizeX = 8,
+    sizeY = 8,
+    studsOffsetY = 0.7,
     Tint = Color3.new(1, 1, 1),
     Transparency = 0,
     LightInfluence = 1,
@@ -45,9 +45,10 @@ local DEFAULTS = {
     FrameJump = false,             -- a little visual hop on every walk frame (only the sprite moves, NOT a real jump)
     FrameJumpHighestHeight = 1,    -- how high each hop goes, in studs
     FrameSkipJump = {},            -- walk frame numbers (1 = first walk sprite) that do NOT hop. empty = none skipped
+    FrameSkipStomp = {},           -- walk frame numbers (1 = first walk sprite) that stay silent (no footstep). empty = none skipped
 
     GlitchEffect = false,
-    GlitchStrength = 0.4,
+    GlitchStrength = 0.1,
     GlitchRate = 20,
 
     RainbowKeyframeColor = false,
@@ -59,6 +60,9 @@ local DEFAULTS = {
     AfterimageFadeTime = 0.5,      -- particle lifetime in seconds (TBB's emitter uses 0.5)
     AfterimageTransparency = 0.4,
     AfterimageDistort = true,
+    AfterimageDistortAmount = 0.15, -- how much each ghost is squashed/stretched and enlarged (0.15 = up to ~15%)
+    AfterimageDistortRotation = 0, -- random tilt per ghost in degrees (0 = none)
+    AfterimageFollowFrame = false, -- true = like TBB: one emitter whose texture always matches the billboard's current frame
     AfterimageSizeScale = 0.5,     -- multiplies the size of each ghost
     AfterimageGrow = 0,            -- 0 = ghosts keep their size and just fade out. 0.2 = they grow 20% by the end
     AfterimageLightEmission = 0.5, -- 0 = normal, 1 = glowing/additive (great with rainbow)
@@ -116,6 +120,7 @@ local DEFAULTS = {
     GifMaxSize = 770,              -- gifs wider/taller than this (pixels) are refused, shrink them first
     DeleteDownloadsOnRemove = false, -- true = delete the downloaded files when the skin is removed (reset/respawn)
     Debug = true,                  -- false = only print problems
+    DebugFrames = false,           -- prints the walk frame number every time it changes, and whether hop/jiggle/stomp fire on it
 }
 -- settings that are allowed to be nil (so they aren't flagged as typos)
 local OPTIONAL = {WalkFrameSwitchSpeed = true, ThemeSound = true, PointLightModifier = true,
@@ -154,6 +159,7 @@ local function buildConfig(user)
     cfg.AfterimageLightEmission = math.clamp(cfg.AfterimageLightEmission, 0, 1)
     cfg.GhostPulseMin = math.clamp(cfg.GhostPulseMin, 0, 1)
     cfg.FrameJumpHighestHeight = math.max(cfg.FrameJumpHighestHeight, 0)
+    cfg.AfterimageDistortAmount = math.clamp(cfg.AfterimageDistortAmount, 0, 1)
     cfg.ColorSaturation = math.max(cfg.ColorSaturation, 0)
     cfg.ColorBrightness = math.max(cfg.ColorBrightness, 0)
     cfg.Tint = fixColor(cfg.Tint, cfg)
@@ -909,6 +915,9 @@ function Brain.Run(userCfg)
             Tilt = 0,                                -- degrees, tips the orbit ring (90 = a vertical ring)
             Bob = 0,                                 -- studs of up/down bobbing
             BobSpeed = 1,
+            Pattern = "circle",                      -- circle | figure8 | spiral | flower | snake
+            PatternPetals = 3,                       -- flower only: petal count
+            SnakeSpacing = 0.3,                      -- snake only: seconds between each orb along your path
             ImageFrameSpeed = 0.1,                   -- seconds per frame for gif/multi-frame image orbs
         }
         for k, v in pairs(orbCfg) do
@@ -925,6 +934,8 @@ function Brain.Run(userCfg)
             local entry = entries and entries[i] or {}
             spec.fireColor = entry.FireColor or entry.Color or shared.FireColor
             spec.Type = tostring(spec.Type):lower()
+            spec.Pattern = tostring(spec.Pattern or "circle"):lower()
+            spec.index = i
             spec.Color = fixColor(spec.Color, cfg)
             if spec.SecondaryColor then spec.SecondaryColor = fixColor(spec.SecondaryColor, cfg) end
             if spec.ImageColor then spec.ImageColor = fixColor(spec.ImageColor, cfg) end
@@ -1082,6 +1093,7 @@ function Brain.Run(userCfg)
     -- and we fire the one that matches the frame you're currently showing
     local trailHolder, trailPart
     local emitters, emitTimes = {}, {}
+    local followEmitter -- only used when AfterimageFollowFrame is on
     local currentColor = cfg.Tint
     local hoverOffset = 0
     local jumpOffset = 0 -- FrameJump's hop height, kept separate from hover so they just add together
@@ -1111,47 +1123,65 @@ function Brain.Run(userCfg)
         local squash = (aspect - 1) / (aspect + 1)
         local baseSize = cfg.sizeX / math.max(1 - squash, 0.013) * cfg.AfterimageSizeScale
         local endSize = baseSize * (1 + cfg.AfterimageGrow) -- default: same size the whole time, it only fades
-        local sizeEnv = cfg.AfterimageDistort and baseSize * 0.015 or 0
-        local squashEnv = cfg.AfterimageDistort and 0.01 or 0
 
-        for _, set in ipairs({idle, walk}) do
-            for _, id in ipairs(set) do
-                if not emitters[id] then
-                    local em = Instance.new("ParticleEmitter")
-                    em.Texture = id
-                    em.Rate = 0 -- we emit by hand
-                    em.Enabled = true
-                    em.Speed = NumberRange.new(0)
-                    em.SpreadAngle = Vector2.new(0, 0)
-                    em.Acceleration = Vector3.new(0, 0, 0)
-                    em.Drag = 0
-                    em.Rotation = NumberRange.new(0)
-                    em.RotSpeed = NumberRange.new(0)
-                    em.LockedToPart = false -- ghosts stay where they were emitted
-                    em.Orientation = Enum.ParticleOrientation.FacingCamera
-                    em.LightEmission = cfg.AfterimageLightEmission
-                    em.LightInfluence = cfg.LightInfluence
-                    em.ZOffset = cfg.AfterimageZOffset -- layering by render depth, no physical offset
-                    em.Lifetime = NumberRange.new(cfg.AfterimageFadeTime, cfg.AfterimageFadeTime)
-                    em.Color = ColorSequence.new(currentColor)
-                    em.Transparency = NumberSequence.new(cfg.AfterimageTransparency, 1)
-                    em.Size = NumberSequence.new({
-                        NumberSequenceKeypoint.new(0, baseSize, sizeEnv),
-                        NumberSequenceKeypoint.new(1, endSize, sizeEnv),
-                    })
-                    em.Squash = NumberSequence.new({
-                        NumberSequenceKeypoint.new(0, squash, squashEnv),
-                        NumberSequenceKeypoint.new(1, squash, squashEnv),
-                    })
-                    em.Parent = attach
-                    emitters[id] = em
+        -- AfterimageDistort: every ghost gets its own random squash/stretch and size. the size runs from exactly
+        -- the billboard's size up to (1 + amount) times bigger, so ghosts poke out a bit beyond it, and the
+        -- squash makes each one wider and shorter, or taller and thinner. AfterimageDistortAmount = how much
+        local d = cfg.AfterimageDistort and cfg.AfterimageDistortAmount or 0
+        local sizeStart = baseSize * (1 + d / 2)
+        local sizeFinish = endSize * (1 + d / 2)
+        local envStart = baseSize * d / 2
+        local envFinish = endSize * d / 2
+        local squashEnv = math.min(d, math.max(0, 0.95 - math.abs(squash)))
+        local spin = cfg.AfterimageDistort and cfg.AfterimageDistortRotation or 0
+
+        local function makeGhostEmitter(texture)
+            local em = Instance.new("ParticleEmitter")
+            em.Texture = texture
+            em.Rate = 0 -- we emit by hand
+            em.Enabled = true
+            em.Speed = NumberRange.new(0)
+            em.SpreadAngle = Vector2.new(0, 0)
+            em.Acceleration = Vector3.new(0, 0, 0)
+            em.Drag = 0
+            em.Rotation = NumberRange.new(-spin, spin)
+            em.RotSpeed = NumberRange.new(0)
+            em.LockedToPart = false -- ghosts stay where they were emitted
+            em.Orientation = Enum.ParticleOrientation.FacingCamera
+            em.LightEmission = cfg.AfterimageLightEmission
+            em.LightInfluence = cfg.LightInfluence
+            em.ZOffset = cfg.AfterimageZOffset -- layering by render depth, no physical offset
+            em.Lifetime = NumberRange.new(cfg.AfterimageFadeTime, cfg.AfterimageFadeTime)
+            em.Color = ColorSequence.new(currentColor)
+            em.Transparency = NumberSequence.new(cfg.AfterimageTransparency, 1)
+            em.Size = NumberSequence.new({
+                NumberSequenceKeypoint.new(0, sizeStart, envStart),
+                NumberSequenceKeypoint.new(1, sizeFinish, envFinish),
+            })
+            em.Squash = NumberSequence.new({
+                NumberSequenceKeypoint.new(0, squash, squashEnv),
+                NumberSequenceKeypoint.new(1, squash, squashEnv),
+            })
+            em.Parent = attach
+            return em
+        end
+
+        if cfg.AfterimageFollowFrame then
+            -- like TBB: ONE emitter, and its Texture is set to the billboard's current frame every time the
+            -- frame changes (so the live ghosts follow the sprite's animation too)
+            followEmitter = makeGhostEmitter(idle[1])
+        else
+            -- default: one emitter per frame, and each ghost keeps the frame it was born with
+            for _, set in ipairs({idle, walk}) do
+                for _, id in ipairs(set) do
+                    if not emitters[id] then emitters[id] = makeGhostEmitter(id) end
                 end
             end
         end
     end
 
     local function spawnAfterimage(texture, moving)
-        local em = emitters[texture]
+        local em = followEmitter or emitters[texture]
         if not em then return end
 
         local now = os.clock()
@@ -1497,7 +1527,7 @@ function Brain.Run(userCfg)
     end
 
     -- main loop
-    local walkSpeed = cfg.WalkFrameSwitchSpeed or 0.125 -- 0.125 == math.floor(walkTime * 8) % 2
+    local walkSpeed = cfg.WalkFrameSwitchSpeed or 0.2
     local walkTime, idleTime = 0, 0
     local activeTexture = idle[1]
     local squashY = 1
@@ -1514,8 +1544,49 @@ function Brain.Run(userCfg)
     -- FrameSkipJump / FrameSkipJiggle: walk frame numbers to leave out. bad or empty lists skip nothing
     local skipJump = toIndexSet(cfg.FrameSkipJump, "FrameSkipJump")
     local skipJiggle = toIndexSet(cfg.FrameSkipJiggle, "FrameSkipJiggle")
+    local skipStomp = toIndexSet(cfg.FrameSkipStomp, "FrameSkipStomp")
+    local lastDebugIdx
     local jumpY = 0
     local jiggleEasing = false
+
+    -- orb patterns. offsets are around you, in world axes (so they don't turn when you turn)
+    local function orbOffset(sp, a)
+        local D = sp.Distance
+        local pat = sp.Pattern
+        if pat == "figure8" then
+            return Vector3.new(math.cos(a) * D, 0, math.sin(2 * a) * D * 0.5)
+        elseif pat == "spiral" then
+            -- radius breathes between 20% and 100% of Distance (out for one orbit, back in for the next)
+            local r = D * (0.2 + 0.8 * (0.5 - 0.5 * math.cos(a * 0.5)))
+            return Vector3.new(math.cos(a) * r, 0, math.sin(a) * r)
+        elseif pat == "flower" then
+            local r = D * math.cos((sp.PatternPetals or 3) * a)
+            return Vector3.new(math.cos(a) * r, 0, math.sin(a) * r)
+        end
+        return Vector3.new(math.cos(a) * D, 0, math.sin(a) * D) -- circle
+    end
+
+    -- snake pattern: each orb sits where you were a moment ago (orb 1 = SnakeSpacing seconds ago, orb 2 = twice that...)
+    local pathHist = {}
+    local usesSnake, maxSnakeDelay = false, 0
+    for _, o in ipairs(orbs) do
+        if o.spec.Pattern == "snake" then
+            usesSnake = true
+            maxSnakeDelay = math.max(maxSnakeDelay, o.spec.index * (o.spec.SnakeSpacing or 0.3))
+        end
+    end
+    local function pathAt(T)
+        local n = #pathHist
+        if n == 0 then return root.Position end
+        if T >= pathHist[n].t then return pathHist[n].p end
+        for k = n - 1, 1, -1 do
+            local p0, p1 = pathHist[k], pathHist[k + 1]
+            if T >= p0.t then
+                return p0.p:Lerp(p1.p, (T - p0.t) / math.max(p1.t - p0.t, 1e-4))
+            end
+        end
+        return pathHist[1].p
+    end
 
     local function step(dt)
         local now = os.clock()
@@ -1535,21 +1606,6 @@ function Brain.Run(userCfg)
             walkTime = 0
         end
 
-        -- stomps: one footstep every time the walk frame switches (same timer as the animation,
-        -- so ScaleWalkWithSpeed speeds them up too). none while you're in the air.
-        -- the first one plays right as you start walking
-        if #stompSounds > 0 then
-            if moving then
-                local walkStep = math.floor(walkTime / math.max(walkSpeed, 0.01))
-                if walkStep ~= lastStomp then
-                    lastStomp = walkStep
-                    if humanoid.FloorMaterial ~= Enum.Material.Air then playStomp() end
-                end
-            else
-                lastStomp = -1
-            end
-        end
-
         -- frames
         local tex, walkIdx
         if moving then
@@ -1561,6 +1617,38 @@ function Brain.Run(userCfg)
             activeTexture = tex
             sprite.Image = tex
             for i = 1, #layers do layers[i].gui.Image = tex end
+            if followEmitter then followEmitter.Texture = tex end
+        end
+
+        -- stomps: one footstep every time the walk frame switches (same timer as the animation, so
+        -- ScaleWalkWithSpeed speeds them up too). frames listed in FrameSkipStomp stay silent, and there's
+        -- no sound in the air. the first one plays right as you start walking
+        if #stompSounds > 0 then
+            if moving then
+                local walkStep = math.floor(walkTime / math.max(walkSpeed, 0.01))
+                if walkStep ~= lastStomp then
+                    lastStomp = walkStep
+                    if not skipStomp[walkIdx] and humanoid.FloorMaterial ~= Enum.Material.Air then playStomp() end
+                end
+            else
+                lastStomp = -1
+            end
+        end
+
+        -- DebugFrames: shows which walk frame is playing and which effects fire on it
+        if cfg.DebugFrames then
+            if moving and walkIdx ~= lastDebugIdx then
+                lastDebugIdx = walkIdx
+                local function state(enabled, skipSet)
+                    if not enabled then return "off" end
+                    return skipSet[walkIdx] and "SKIPPED" or "yes"
+                end
+                warn(("%swalk frame %d | hop: %s | jiggle: %s | stomp: %s"):format(TAG, walkIdx,
+                    state(cfg.FrameJump, skipJump), state(cfg.FrameJiggle, skipJiggle),
+                    state(#stompSounds > 0, skipStomp)))
+            elseif not moving then
+                lastDebugIdx = nil
+            end
         end
 
         -- rainbow (multiplied by Tint)
@@ -1703,20 +1791,36 @@ function Brain.Run(userCfg)
             end
         end
 
-        -- orbs circle you (world axes, so they don't turn when you turn)
+        -- orbs move in their pattern (circle / figure8 / spiral / flower / snake)
         if #orbs > 0 then
             local center = root.Position
+            if usesSnake then
+                local last = pathHist[#pathHist]
+                if not last or now - last.t >= 0.03 then
+                    pathHist[#pathHist + 1] = {t = now, p = center}
+                end
+                while pathHist[1] and pathHist[1].t < now - maxSnakeDelay - 0.5 do
+                    table.remove(pathHist, 1)
+                end
+            end
             for i = 1, #orbs do
                 local o = orbs[i]
                 local sp = o.spec
                 local a = o.phase + now * sp.Speed * 6.2832
-                local offset = Vector3.new(math.cos(a) * sp.Distance, 0, math.sin(a) * sp.Distance)
-                if sp.Tilt ~= 0 then
-                    offset = CFrame.Angles(math.rad(sp.Tilt), 0, 0):VectorToWorldSpace(offset)
-                end
                 local bob = 0
                 if sp.Bob ~= 0 then bob = math.sin(now * sp.BobSpeed * 6.2832 + o.phase) * sp.Bob end
-                o.part.CFrame = CFrame.new(center + offset + Vector3.new(0, sp.Height + bob, 0))
+                if sp.Pattern == "snake" then
+                    -- a small swirl keeps them from stacking on top of each other when you stand still
+                    local swirl = Vector3.new(math.cos(a), 0, math.sin(a)) * math.min(1.2, sp.Distance)
+                    local p = pathAt(now - o.spec.index * (sp.SnakeSpacing or 0.3))
+                    o.part.CFrame = CFrame.new(p + swirl + Vector3.new(0, sp.Height + bob, 0))
+                else
+                    local offset = orbOffset(sp, a)
+                    if sp.Tilt ~= 0 then
+                        offset = CFrame.Angles(math.rad(sp.Tilt), 0, 0):VectorToWorldSpace(offset)
+                    end
+                    o.part.CFrame = CFrame.new(center + offset + Vector3.new(0, sp.Height + bob, 0))
+                end
                 if o.fires then
                     -- fractional FireRate: this Fire is only switched on for part of every 0.08s cycle
                     local cycle = ((now + o.phase) % 0.08) / 0.08
