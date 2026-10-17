@@ -1,4 +1,4 @@
--- SkinBrain v2.9
+-- SkinBrain v3.2
 -- the boring work: downloads/caching, frame logic, billboard, effects, cleanup.
 -- you never need to edit this. all settings live in SkinTemplate.lua.
 -- host it (github raw link) or put it in your executor's workspace as "SkinBrain.lua".
@@ -9,7 +9,7 @@ local ContentProvider = game:GetService("ContentProvider")
 
 local env = (getgenv and getgenv()) or _G
 local TAG = "[SkinBrain] "
-local Brain = {Version = "2.9"}
+local Brain = {Version = "3.2"}
 
 -- --- DEFAULTS ---
 local DEFAULTS = {
@@ -18,15 +18,20 @@ local DEFAULTS = {
     -- sprites (rbxassetid / number / link). lists, any amount of frames
     Idle = {},
     Walk = {},
-    IdleFrameSwitchSpeed = 0.25,   -- seconds per idle frame
+    StepDelay = 0.2,               -- seconds each frame is shown (the in-game skin system's StepDelay). idle/walk can override it
+    FrameMode = "auto",            -- auto = idle when you stand still, walk when you move (like the game) | idle = always idle frames | walk = always walk frames | reverse = the opposite of auto
+    MoveDetection = "game",        -- game = like the real skin system (Humanoid.Running speed above WalkMagnitude) | input = any move input
+    WalkMagnitude = 0.1,           -- running speed (studs/second) above which you count as walking (MoveDetection = "game")
+    IdleFrameDelays = {},          -- optional seconds for each idle frame, like the game's per-frame StepDelay: {0.3, 0.1, ...}
+    WalkFrameDelays = {},          -- same for walk frames. missing or 0 entries use the normal delay
     IdleFrameCycle = false,
     WalkFrameCycle = false,
     ScaleWalkWithSpeed = false,    -- walk animation speeds up/slows down with your real speed
 
     -- billboard
-    sizeX = 8,
-    sizeY = 8,
-    studsOffsetY = 0.7,
+    sizeX = 7,
+    sizeY = 7,
+    studsOffsetY = 0.25,
     Tint = Color3.new(1, 1, 1),
     Transparency = 0,
     LightInfluence = 1,
@@ -35,6 +40,7 @@ local DEFAULTS = {
     HideCharacter = false,
     HideNameTag = false,
     RemoveOtherBillboards = true,
+    Brightness = 1,                -- brightness of the main skin billboard (above 1 = brighter)
 
     -- effects
     FrameJiggle = false,
@@ -43,13 +49,22 @@ local DEFAULTS = {
     FrameSkipJiggle = {},          -- walk frame numbers (1 = first walk sprite) that do NOT trigger the jiggle. empty = none skipped
 
     FrameJump = false,             -- a little visual hop on every walk frame (only the sprite moves, NOT a real jump)
-    FrameJumpHighestHeight = 1,    -- how high each hop goes, in studs
+    FrameJumpHighestHeight = 1.5708, -- how high each hop goes, in studs (the in-game bounce height is pi/2 = 1.5708)
     FrameSkipJump = {},            -- walk frame numbers (1 = first walk sprite) that do NOT hop. empty = none skipped
     FrameSkipStomp = {},           -- walk frame numbers (1 = first walk sprite) that stay silent (no footstep). empty = none skipped
+    FrameSwayAmount = 0,           -- degrees: the sprite sways left/right on alternate walk steps (the game's SwayAmount). 0 = off
 
     GlitchEffect = false,
     GlitchStrength = 0.1,
     GlitchRate = 20,
+
+    SliceGlitch = false,           -- horizontal slicing: the sprite is cut into strips and random strips slide left and right
+    SliceCount = 24,               -- how many horizontal strips
+    SliceStrength = 0.12,          -- how far a strip can slide, as a fraction of the sprite's width
+    SliceSpeed = 3,                -- how fast strips swing back and forth (swings per second)
+    SliceChance = 0.5,             -- chance (0 to 1) that a strip is sliding at any moment
+    SliceRerollTime = 0.25,        -- seconds between re-picking which strips slide
+    SliceGapChance = 0,            -- chance a sliding strip drops out completely (the dashed-line look). 0 = never
 
     RainbowKeyframeColor = false,
     RainbowSpeed = 10,
@@ -66,6 +81,7 @@ local DEFAULTS = {
     AfterimageSizeScale = 0.5,     -- multiplies the size of each ghost
     AfterimageGrow = 0,            -- 0 = ghosts keep their size and just fade out. 0.2 = they grow 20% by the end
     AfterimageLightEmission = 0.5, -- 0 = normal, 1 = glowing/additive (great with rainbow)
+    AfterimageBrightness = 1,      -- brightness of the afterimage particles (above 1 = brighter)
     AfterimageZOffset = -0.5,      -- render depth of ghosts: negative = behind the sprite, 0 = same depth, positive = in front
 
     WobbleEffect = false,          -- sprite tilts side to side
@@ -110,6 +126,23 @@ local DEFAULTS = {
     ColorSaturation = 1,           -- e.g. 0.6 = 40% less saturated
     ColorBrightness = 1,           -- e.g. 0.9 = 10% darker
 
+    -- TBB-style scare event: every ScareInterval seconds an image flashes over your skin and a sound plays.
+    -- the scare ends when the sound ends
+    ScareEvent = false,
+    ScareInterval = 24,            -- seconds between scares (from the start of one to the start of the next)
+    ScareRemoveBear = false,       -- true = your main skin billboard is hidden during the scare, then comes back
+    ScareRemoveAfterimage = false, -- true = the afterimage is hidden during the scare, then comes back
+    ScareImage = "https://static.wikia.nocookie.net/roblox-bear-content/images/9/90/TBB_Classic_Scare1.png/revision/latest/scale-to-width-down/185?cb=20260211113902",
+    ScareSizeX = 7,                -- the scare image has its own billboard size...
+    ScareSizeY = 7,
+    ScareStudsOffsetX = 0,         -- ...and its own offset (Z: positive = in front of your skin)
+    ScareStudsOffsetY = 0.25,
+    ScareStudsOffsetZ = 1,
+    ScareBrightness = 1,           -- brightness of the scare image
+    ScareSound = "https://imgg.fr/r/pCyKOKME.mp3",
+    ScareVolume = 4,
+    ScareFallbackTime = 2,         -- seconds the scare lasts if the sound can't play
+
     -- downloads / logging
     ForceRedownload = false,
     DownloadTimeout = 20,
@@ -123,8 +156,8 @@ local DEFAULTS = {
     DebugFrames = false,           -- prints the walk frame number every time it changes, and whether hop/jiggle/stomp fire on it
 }
 -- settings that are allowed to be nil (so they aren't flagged as typos)
-local OPTIONAL = {WalkFrameSwitchSpeed = true, ThemeSound = true, PointLightModifier = true,
-    VoiceLines = true, StompSound = true, OrbOrbit = true}
+local OPTIONAL = {WalkFrameSwitchSpeed = true, IdleFrameSwitchSpeed = true, ThemeSound = true, PointLightModifier = true,
+    VoiceLines = true, StompSound = true, OrbOrbit = true, ExtraBillboards = true, ThemeSound2 = true}
 
 -- scales a color's saturation/brightness (see ColorSaturation / ColorBrightness)
 local function fixColor(c, cfg)
@@ -135,9 +168,16 @@ local function fixColor(c, cfg)
     return Color3.fromHSV(h, math.clamp(sv * sat, 0, 1), math.clamp(v * bri, 0, 1))
 end
 
+-- alternate spellings that are accepted for a few settings
+local ALIASES = {
+    Scareremovebear = "ScareRemoveBear", Scareremoveafterimage = "ScareRemoveAfterimage",
+    Scareimage = "ScareImage", Scaresound = "ScareSound", Scareevent = "ScareEvent",
+}
+
 local function buildConfig(user)
     local cfg = {}
     for k, v in pairs(user or {}) do
+        k = ALIASES[k] or k
         if DEFAULTS[k] == nil and not OPTIONAL[k] then
             warn(TAG .. "unknown setting '" .. tostring(k) .. "' (typo?)")
         end
@@ -160,6 +200,26 @@ local function buildConfig(user)
     cfg.GhostPulseMin = math.clamp(cfg.GhostPulseMin, 0, 1)
     cfg.FrameJumpHighestHeight = math.max(cfg.FrameJumpHighestHeight, 0)
     cfg.AfterimageDistortAmount = math.clamp(cfg.AfterimageDistortAmount, 0, 1)
+    cfg.StepDelay = math.max(cfg.StepDelay, 0.02)
+    cfg.Brightness = math.max(cfg.Brightness, 0)
+    cfg.AfterimageBrightness = math.max(cfg.AfterimageBrightness, 0)
+    cfg.ScareBrightness = math.max(cfg.ScareBrightness, 0)
+    cfg.ScareInterval = math.max(cfg.ScareInterval, 1)
+    cfg.ScareVolume = math.clamp(cfg.ScareVolume, 0, 10)
+    cfg.ScareFallbackTime = math.max(cfg.ScareFallbackTime, 0.2)
+    cfg.WalkMagnitude = math.max(cfg.WalkMagnitude, 0)
+    cfg.SliceCount = math.clamp(math.floor(cfg.SliceCount), 2, 200)
+    cfg.SliceStrength = math.max(cfg.SliceStrength, 0)
+    cfg.SliceChance = math.clamp(cfg.SliceChance, 0, 1)
+    cfg.SliceGapChance = math.clamp(cfg.SliceGapChance, 0, 1)
+    cfg.SliceRerollTime = math.max(cfg.SliceRerollTime, 0.05)
+    local mode = tostring(cfg.FrameMode):lower()
+    if mode ~= "auto" and mode ~= "idle" and mode ~= "walk" and mode ~= "reverse" then
+        warn(TAG .. "FrameMode should be auto, idle, walk or reverse, using auto")
+        mode = "auto"
+    end
+    cfg.FrameMode = mode
+    cfg.MoveDetection = (tostring(cfg.MoveDetection):lower() == "input") and "input" or "game"
     cfg.ColorSaturation = math.max(cfg.ColorSaturation, 0)
     cfg.ColorBrightness = math.max(cfg.ColorBrightness, 0)
     cfg.Tint = fixColor(cfg.Tint, cfg)
@@ -167,6 +227,10 @@ local function buildConfig(user)
     if cfg.WalkFrameSwitchSpeed ~= nil and type(cfg.WalkFrameSwitchSpeed) ~= "number" then
         warn(TAG .. "WalkFrameSwitchSpeed should be a number or nil, using the default")
         cfg.WalkFrameSwitchSpeed = nil
+    end
+    if cfg.IdleFrameSwitchSpeed ~= nil and type(cfg.IdleFrameSwitchSpeed) ~= "number" then
+        warn(TAG .. "IdleFrameSwitchSpeed should be a number or nil, using the default")
+        cfg.IdleFrameSwitchSpeed = nil
     end
     return cfg
 end
@@ -652,6 +716,56 @@ local function convertGif(body, prefix, cfg, use)
     return assets, paths
 end
 
+-- pixel size of images we downloaded, keyed by the asset string (only filled when SliceGlitch is on).
+-- exact slicing needs it. png/jpg sizes are read straight from the file header
+local ASSET_DIMS = {}
+
+local function imageSize(data)
+    if type(data) ~= "string" then return nil end
+    if data:sub(1, 8) == "\137PNG\r\n\26\n" and #data >= 24 then
+        local a, b, c, d, e, f, g, h = data:byte(17, 24)
+        return {((a * 256 + b) * 256 + c) * 256 + d, ((e * 256 + f) * 256 + g) * 256 + h}
+    end
+    if data:sub(1, 2) == "\255\216" then -- jpeg: walk the markers until the start-of-frame one
+        local pos = 3
+        local len = #data
+        while pos + 9 <= len do
+            if data:byte(pos) ~= 0xFF then
+                pos += 1
+            else
+                local m = data:byte(pos + 1)
+                if m == 0xFF then
+                    pos += 1
+                elseif m == 0xD8 or m == 0x01 or (m >= 0xD0 and m <= 0xD7) then
+                    pos += 2
+                else
+                    if m >= 0xC0 and m <= 0xCF and m ~= 0xC4 and m ~= 0xC8 and m ~= 0xCC then
+                        local h = data:byte(pos + 5) * 256 + data:byte(pos + 6)
+                        local w = data:byte(pos + 7) * 256 + data:byte(pos + 8)
+                        return {w, h}
+                    end
+                    pos += 2 + data:byte(pos + 2) * 256 + data:byte(pos + 3)
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function dimsFromFiles(files)
+    if not (files and readfile) then return nil end
+    for _, p in ipairs(files) do
+        if p:match("%.png$") or p:match("%.jpg$") then
+            local ok, data = pcall(readfile, p)
+            if ok then
+                local dims = imageSize(data)
+                if dims then return dims end
+            end
+        end
+    end
+    return nil
+end
+
 local function findCached(prefix, kind)
     local list = (kind == "audio") and AUDIO_EXTS or IMAGE_EXTS
     for _, e in ipairs(list) do
@@ -795,6 +909,12 @@ local function resolveAll(entries, cfg)
                 task.spawn(function()
                     local assets, files = fetch(src, e.kind, cfg)
                     out[src] = assets or false
+                    if assets and cfg.SliceGlitch and e.kind == "image" then
+                        local dims = dimsFromFiles(files) -- every frame of a gif has the same size
+                        if dims then
+                            for _, a in ipairs(assets) do ASSET_DIMS[a] = dims end
+                        end
+                    end
                     if assets and files then
                         for _, p in ipairs(files) do paths[#paths + 1] = p end
                     end
@@ -837,20 +957,47 @@ local function toIndexSet(v, name)
     return set
 end
 
--- frame picker. cycle = ping-pong (1,2,3,2,1,2,3...) so no frame ever shows twice in a row
-local function pickFrame(frames, t, speed, cycle)
-    local n = #frames
-    if n == 1 then return frames[1], 1 end
-    local step = math.floor(t / math.max(speed, 0.01))
-    local idx
-    if cycle and n > 2 then
-        local period = 2 * n - 2
-        local p = step % period
-        idx = (p < n) and (p + 1) or (period - p + 1)
+-- frame clock for one frame list, like the game's per-frame StepDelay. give it how long you've been in this mode
+-- and it returns: the frame number, how far through that frame you are (0..1), and how many frame switches
+-- have happened. cycle = ping-pong order (1,2,3,2,1,...) so no frame shows twice in a row.
+-- delays = optional seconds for each frame (missing or 0 = defaultDelay)
+local function makeClock(count, cycle, defaultDelay, delays)
+    local seq = {}
+    if cycle and count > 2 then
+        for i = 1, count do seq[#seq + 1] = i end
+        for i = count - 1, 2, -1 do seq[#seq + 1] = i end
     else
-        idx = (step % n) + 1
+        for i = 1, count do seq[i] = i end
     end
-    return frames[idx], idx -- the picked sprite, and its number in the list (1 = first)
+    local start, dur, total = {}, {}, 0
+    for k, idx in ipairs(seq) do
+        local d = type(delays) == "table" and tonumber(delays[idx]) or nil
+        if not d or d <= 0 then d = defaultDelay end
+        d = math.max(d, 0.01)
+        start[k], dur[k] = total, d
+        total += d
+    end
+    local n = #seq
+    return function(t)
+        local cycles = math.floor(t / total)
+        local tt = t - cycles * total
+        local k = n
+        for i = 1, n do
+            if tt < start[i] + dur[i] then
+                k = i
+                break
+            end
+        end
+        return seq[k], math.clamp((tt - start[k]) / dur[k], 0, 1), cycles * n + (k - 1)
+    end
+end
+
+-- which frame set to show: auto = walk frames while you move (like the game), idle otherwise
+local function animWalkFor(mode, moving)
+    if mode == "walk" then return true end
+    if mode == "idle" then return false end
+    if mode == "reverse" then return not moving end
+    return moving
 end
 
 local function mulColor(a, b)
@@ -894,6 +1041,15 @@ function Brain.Run(userCfg)
     local themeSrc = type(theme) == "table" and normalize(theme.Id) or nil
     if themeSrc then entries[#entries + 1] = {src = themeSrc, kind = "audio"} end
 
+    -- optional second theme track (plays together with the first, also looping)
+    local theme2 = cfg.ThemeSound2
+    local theme2Src = type(theme2) == "table" and normalize(theme2.Id) or nil
+    if theme2Src then entries[#entries + 1] = {src = theme2Src, kind = "audio"} end
+
+    -- scare event image + sound: only downloaded when the event is on
+    local scareImgSrc = cfg.ScareEvent and collect(cfg.ScareImage, "image") or {}
+    local scareSndSrc = cfg.ScareEvent and collect(cfg.ScareSound, "audio") or {}
+
     -- voice lines + stomp sounds: only downloaded when enabled
     local voiceCfg = type(cfg.VoiceLines) == "table" and cfg.VoiceLines or nil
     local stompCfg = type(cfg.StompSound) == "table" and cfg.StompSound or nil
@@ -918,6 +1074,8 @@ function Brain.Run(userCfg)
             Pattern = "circle",                      -- circle | figure8 | spiral | flower | snake
             PatternPetals = 3,                       -- flower only: petal count
             SnakeSpacing = 0.3,                      -- snake only: seconds between each orb along your path
+            FieldRadius = 3,                         -- invisible magnetic field: studs from your center that orbs never enter (0 = off)
+            FieldHeight = 4,                         -- how far up/down from your center the field reaches
             ImageFrameSpeed = 0.1,                   -- seconds per frame for gif/multi-frame image orbs
         }
         for k, v in pairs(orbCfg) do
@@ -943,6 +1101,21 @@ function Brain.Run(userCfg)
             if spec.Type == "image" then spec.imageSrc = collect(spec.Image, "image") end
             if spec.Texture then spec.textureSrc = collect(spec.Texture, "image") end
             orbSpecs[#orbSpecs + 1] = spec
+        end
+    end
+
+    -- extra billboards: independent billboards on you, each with its own frames, size, offset and mode
+    local extraSpecs = {}
+    if type(cfg.ExtraBillboards) == "table" then
+        for i, e in ipairs(cfg.ExtraBillboards) do
+            if type(e) == "table" and e.Enabled ~= false then
+                local spec = {}
+                for k, v in pairs(e) do spec[k] = v end
+                spec.index = i
+                spec.idleSrc = collect(spec.Idle, "image")
+                spec.walkSrc = collect(spec.Walk, "image")
+                extraSpecs[#extraSpecs + 1] = spec
+            end
         end
     end
 
@@ -972,6 +1145,13 @@ function Brain.Run(userCfg)
         spec.frames = spec.imageSrc and frames(spec.imageSrc) or {}
         spec.texture = spec.textureSrc and frames(spec.textureSrc)[1] or nil
     end
+    for _, spec in ipairs(extraSpecs) do
+        spec.idle, spec.walk = frames(spec.idleSrc), frames(spec.walkSrc)
+        if #spec.idle == 0 and #spec.walk > 0 then spec.idle = {spec.walk[1]} end
+        if #spec.walk == 0 then spec.walk = spec.idle end
+    end
+    local scareImg = frames(scareImgSrc)[1]
+    local scareSnd = frames(scareSndSrc)[1]
     info(cfg, ("loaded '%s': %d idle frame(s), %d walk frame(s)"):format(
         cfg.SkinName, #frames(idleSrc), #frames(walkSrc)))
     if #idle == 0 then
@@ -1001,6 +1181,7 @@ function Brain.Run(userCfg)
     gui.LightInfluence = cfg.LightInfluence
     gui.Size = UDim2.new(cfg.sizeX, 0, cfg.sizeY, 0)
     gui.StudsOffset = Vector3.new(0, cfg.studsOffsetY, 0)
+    pcall(function() gui.Brightness = cfg.Brightness end)
     gui.Parent = root
 
     -- holder frame: the shape effects (squash, wobble, hover...) move this, so the sprite and the
@@ -1050,6 +1231,81 @@ function Brain.Run(userCfg)
         local o = cfg.RGBSplitAmount
         addLayer(-o, 0, 1, Color3.fromRGB(255, 40, 40), 0.45)
         addLayer(o, 0, 1, Color3.fromRGB(40, 220, 255), 0.45)
+    end
+
+    -- horizontal slicing glitch (optional): the sprite is cut into strips and random strips slide left and right.
+    -- the real sprite is hidden and the strips mirror its image / color / transparency every frame, so tint,
+    -- rainbow, flicker and the rest still work. exact mode crops each strip out of the image itself (needs the
+    -- image's pixel size, which we read from downloaded files). images given as rbxassetid have no readable
+    -- size, so those fall back to clipping frames, and clipping stops working while the sprite is rotating
+    local strips = {}
+    local sliceMode
+    local sliceMargin = cfg.SliceStrength + 0.02
+    local function layoutStrips(asset)
+        if sliceMode ~= "rect" then return end
+        local dims = ASSET_DIMS[asset]
+        if not dims then return end
+        local w, h = dims[1], dims[2]
+        local n = #strips
+        for i = 1, n do
+            local top = math.floor((i - 1) * h / n)
+            local bottom = math.floor(i * h / n)
+            local st = strips[i]
+            -- an image with fewer pixel rows than strips: the extra strips have no row to show, so hide them
+            st.img.Visible = bottom > top
+            if bottom > top then
+                st.img.ImageRectOffset = Vector2.new(0, top)
+                st.img.ImageRectSize = Vector2.new(w, bottom - top)
+                st.y0 = top / h
+                st.img.Size = UDim2.new(1, 0, (bottom - top) / h, 0)
+            end
+        end
+    end
+    if cfg.SliceGlitch then
+        local N = cfg.SliceCount
+        sliceMode = "rect"
+        for _, set in ipairs({idle, walk}) do
+            for _, a in ipairs(set) do
+                if not ASSET_DIMS[a] then sliceMode = "clip" end
+            end
+        end
+        if sliceMode == "clip" then
+            warn(TAG .. "SliceGlitch: some sprite sizes are unknown (rbxassetid images), so it uses clipping strips. "
+                .. "clipping stops working while wobble/glitch/boil/sway rotates the sprite. use image links for exact slicing")
+        end
+        gui.ClipsDescendants = false -- strips slide past the sprite's edge, so don't clip at the billboard border
+
+        for i = 1, N do
+            local st = {amp = 0, ampTarget = 0, phase = math.random() * 6.2832, freq = 0.6 + math.random() * 0.8, gap = false}
+            local img = Instance.new("ImageLabel")
+            img.BackgroundTransparency = 1
+            img.Image = sprite.Image
+            img.ImageColor3 = sprite.ImageColor3
+            img.ImageTransparency = sprite.ImageTransparency
+            if cfg.PixelArt then img.ResampleMode = Enum.ResamplerMode.Pixelated end
+            if sliceMode == "rect" then
+                img.ZIndex = 10
+                img.Parent = holder
+            else
+                local w = 1 + 2 * sliceMargin
+                local frame = Instance.new("Frame")
+                frame.BackgroundTransparency = 1
+                frame.BorderSizePixel = 0
+                frame.ClipsDescendants = true
+                frame.Position = UDim2.new(-sliceMargin, 0, (i - 1) / N, 0)
+                frame.Size = UDim2.new(w, 0, 1 / N, 0)
+                frame.ZIndex = 10
+                frame.Parent = holder
+                img.Size = UDim2.new(1 / w, 0, N, 0)
+                img.Position = UDim2.new(sliceMargin / w, 0, -(i - 1), 0)
+                img.Parent = frame
+                st.frame = frame
+            end
+            st.img = img
+            strips[i] = st
+        end
+        sprite.Visible = false
+        layoutStrips(sprite.Image)
     end
 
     -- preload (non-blocking: some executors hang PreloadAsync on custom files)
@@ -1151,6 +1407,7 @@ function Brain.Run(userCfg)
             em.LightEmission = cfg.AfterimageLightEmission
             em.LightInfluence = cfg.LightInfluence
             em.ZOffset = cfg.AfterimageZOffset -- layering by render depth, no physical offset
+            pcall(function() em.Brightness = cfg.AfterimageBrightness end)
             em.Lifetime = NumberRange.new(cfg.AfterimageFadeTime, cfg.AfterimageFadeTime)
             em.Color = ColorSequence.new(currentColor)
             em.Transparency = NumberSequence.new(cfg.AfterimageTransparency, 1)
@@ -1197,8 +1454,9 @@ function Brain.Run(userCfg)
         -- same camera-relative offset is used here (TBB turns an attachment to face the camera every
         -- frame for this). ghosts sit behind the sprite through the emitter's ZOffset (render depth)
         local cam = workspace.CurrentCamera
-        local up = Vector3.new(0, cfg.studsOffsetY + hoverOffset + jumpOffset, 0)
-        trailPart.CFrame = CFrame.new(root.Position + (cam and cam.CFrame:VectorToWorldSpace(up) or up))
+        local up = Vector3.new(0, cfg.studsOffsetY + hoverOffset, 0)
+        local hop = Vector3.new(0, jumpOffset, 0) -- the hop is a world-space offset, like in the game
+        trailPart.CFrame = CFrame.new(root.Position + (cam and cam.CFrame:VectorToWorldSpace(up) or up) + hop)
 
         if cfg.RainbowKeyframeColor then em.Color = ColorSequence.new(currentColor) end
         em:Emit(1)
@@ -1221,15 +1479,16 @@ function Brain.Run(userCfg)
         humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
     end
 
-    -- theme sound (optional)
-    if themeSrc and resolved[themeSrc] then
+    -- theme sounds (optional): up to two looping tracks that play together
+    local function startTheme(tcfg, src, name)
+        if not (src and resolved[src]) then return end
         local s = Instance.new("Sound")
-        s.Name = "SkinBrainTheme"
-        s.SoundId = resolved[themeSrc][1]
-        s.Volume = theme.Volume or 1
+        s.Name = name
+        s.SoundId = resolved[src][1]
+        s.Volume = tcfg.Volume or 1
         s.Looped = true -- always loops until you reset/respawn
-        s.PlaybackSpeed = theme.PlaybackSpeed or 1
-        if theme.RollOffMaxDistance then s.RollOffMaxDistance = theme.RollOffMaxDistance end
+        s.PlaybackSpeed = tcfg.PlaybackSpeed or 1
+        if tcfg.RollOffMaxDistance then s.RollOffMaxDistance = tcfg.RollOffMaxDistance end
         s.Parent = root
         sounds[#sounds + 1] = s
         s:Play()
@@ -1243,6 +1502,8 @@ function Brain.Run(userCfg)
             end
         end)
     end
+    startTheme(theme, themeSrc, "SkinBrainTheme")
+    startTheme(theme2, theme2Src, "SkinBrainTheme2")
 
     -- voice lines (optional): one random line every MinDelay..MaxDelay seconds.
     -- lines never overlap (it waits for the current one to finish) and never loop
@@ -1359,12 +1620,33 @@ function Brain.Run(userCfg)
     end
 
     -- orbs (optional): balls / fire / smoke / sparkles / images circling you. client-side only
-    local orbHolder
+    local orbHolder, fieldVisual
     local orbs = {}
     if #orbSpecs > 0 then
         orbHolder = Instance.new("Folder")
         orbHolder.Name = "SkinBrainOrbs"
         orbHolder.Parent = workspace
+
+        -- ShowField = true in OrbOrbit draws the field as a faint cylinder so you can tune FieldRadius/FieldHeight
+        if orbCfg and orbCfg.ShowField then
+            local fr = tonumber(orbCfg.FieldRadius) or 3
+            local fh = tonumber(orbCfg.FieldHeight) or 4
+            if fr > 0 then
+                fieldVisual = Instance.new("Part")
+                fieldVisual.Name = "FieldPreview"
+                fieldVisual.Shape = Enum.PartType.Cylinder
+                fieldVisual.Anchored = true
+                fieldVisual.CanCollide = false
+                fieldVisual.CanQuery = false
+                fieldVisual.CanTouch = false
+                fieldVisual.CastShadow = false
+                fieldVisual.Material = Enum.Material.Neon
+                fieldVisual.Color = Color3.fromRGB(90, 170, 255)
+                fieldVisual.Transparency = 0.88
+                fieldVisual.Size = Vector3.new(fh * 2, fr * 2, fr * 2) -- a cylinder's length runs along X
+                fieldVisual.Parent = orbHolder
+            end
+        end
 
         local function makeOrbEmitter(kind, size, color, textureOverride)
             local em = Instance.new("ParticleEmitter")
@@ -1526,8 +1808,176 @@ function Brain.Run(userCfg)
         end
     end
 
+    -- scare event (optional, TBB style): every ScareInterval seconds the scare image appears over your skin
+    -- (its own billboard, in front) and the scare sound plays. when the sound ends, the scare ends: the image
+    -- disappears and anything hidden for it (your skin / the afterimage) comes back
+    local scareGui, scareSound
+    local scareActive = false
+    if cfg.ScareEvent then
+        if not scareImg then
+            warn(TAG .. "ScareEvent is on but ScareImage didn't load, so there will be no scare image")
+        else
+            scareGui = Instance.new("BillboardGui")
+            scareGui.Name = "SkinBrainScare"
+            scareGui.ResetOnSpawn = false
+            scareGui.ClipsDescendants = false
+            scareGui.AlwaysOnTop = cfg.AlwaysOnTop
+            scareGui.LightInfluence = cfg.LightInfluence
+            scareGui.Size = UDim2.new(tonumber(cfg.ScareSizeX) or cfg.sizeX, 0, tonumber(cfg.ScareSizeY) or cfg.sizeY, 0)
+            scareGui.StudsOffset = Vector3.new(cfg.ScareStudsOffsetX, cfg.ScareStudsOffsetY, cfg.ScareStudsOffsetZ)
+            pcall(function() scareGui.Brightness = cfg.ScareBrightness end)
+            scareGui.Enabled = false
+            scareGui.Parent = root
+            local simg = Instance.new("ImageLabel")
+            simg.Size = UDim2.new(1, 0, 1, 0)
+            simg.BackgroundTransparency = 1
+            simg.Image = scareImg
+            if cfg.PixelArt then simg.ResampleMode = Enum.ResamplerMode.Pixelated end
+            simg.Parent = scareGui
+        end
+        if scareSnd then
+            scareSound = Instance.new("Sound")
+            scareSound.Name = "SkinBrainScare"
+            scareSound.SoundId = scareSnd
+            scareSound.Volume = cfg.ScareVolume
+            scareSound.Looped = false
+            scareSound.RollOffMaxDistance = 100000
+            scareSound.Parent = root
+            sounds[#sounds + 1] = scareSound
+        else
+            warn(TAG .. "ScareEvent is on but ScareSound didn't load, scares will last ScareFallbackTime seconds instead")
+        end
+
+        if scareGui or scareSound then
+            task.spawn(function()
+                local nextAt = os.clock() + cfg.ScareInterval
+                while alive do
+                    while alive and os.clock() < nextAt do task.wait(0.25) end
+                    if not alive then break end
+
+                    -- scare starts
+                    local startedAt = os.clock()
+                    scareActive = true
+                    if scareGui then scareGui.Enabled = true end
+                    if cfg.ScareRemoveBear then gui.Enabled = false end
+                    if cfg.ScareRemoveAfterimage then
+                        for _, em in pairs(emitters) do em:Clear() end
+                        if followEmitter then followEmitter:Clear() end
+                    end
+
+                    -- ...and ends when the sound ends (with a safety limit so your skin can never get stuck hidden)
+                    if scareSound then
+                        local finished = false
+                        scareSound.TimePosition = 0
+                        scareSound.Ended:Once(function() finished = true end)
+                        scareSound:Play()
+                        while alive and not finished do
+                            local len = scareSound.TimeLength
+                            local limit = (len > 0) and (len / math.max(scareSound.PlaybackSpeed, 0.1) + 1.5) or 8
+                            if os.clock() - startedAt > limit then break end
+                            task.wait(0.05)
+                        end
+                    else
+                        task.wait(cfg.ScareFallbackTime)
+                    end
+
+                    -- scare over: image goes away, everything comes back
+                    if scareGui then scareGui.Enabled = false end
+                    if cfg.ScareRemoveBear then gui.Enabled = true end
+                    scareActive = false
+                    nextAt = math.max(os.clock(), startedAt + cfg.ScareInterval)
+                end
+            end)
+        end
+    end
+
+    -- extra billboards (optional): each one is its own BillboardGui with its own frames, clocks, size, offset and mode.
+    -- studsOffsetZ decides who is in front: positive = nearer the camera (in front of your main skin), negative = behind it
+    local extras = {}
+    for _, spec in ipairs(extraSpecs) do
+        if #spec.idle == 0 then
+            warn(TAG .. "ExtraBillboards entry " .. spec.index .. " has no usable Idle/Walk sprites, skipping it")
+        else
+            local e = {spec = spec, idle = spec.idle, walk = spec.walk}
+            local egui = Instance.new("BillboardGui")
+            egui.Name = "SkinBrainExtra" .. spec.index
+            egui.ResetOnSpawn = false
+            egui.ClipsDescendants = false
+            egui.AlwaysOnTop = (spec.AlwaysOnTop == nil) and cfg.AlwaysOnTop or spec.AlwaysOnTop == true
+            egui.LightInfluence = math.clamp(tonumber(spec.LightInfluence) or cfg.LightInfluence, 0, 1)
+            pcall(function() egui.Brightness = tonumber(spec.Brightness) or cfg.Brightness end)
+            egui.Size = UDim2.new(tonumber(spec.sizeX) or cfg.sizeX, 0, tonumber(spec.sizeY) or cfg.sizeY, 0)
+            egui.StudsOffset = Vector3.new(tonumber(spec.studsOffsetX) or 0,
+                tonumber(spec.studsOffsetY) or cfg.studsOffsetY, tonumber(spec.studsOffsetZ) or 0)
+            egui.Parent = root
+
+            local eimg = Instance.new("ImageLabel")
+            eimg.Size = UDim2.new(1, 0, 1, 0)
+            eimg.BackgroundTransparency = 1
+            eimg.Image = e.idle[1]
+            eimg.ImageColor3 = (typeof(spec.Tint) == "Color3") and fixColor(spec.Tint, cfg) or cfg.Tint
+            eimg.ImageTransparency = math.clamp(tonumber(spec.Transparency) or cfg.Transparency, 0, 1)
+            local pixel = cfg.PixelArt
+            if spec.PixelArt ~= nil then pixel = spec.PixelArt == true end
+            if pixel then eimg.ResampleMode = Enum.ResamplerMode.Pixelated end
+            eimg.Parent = egui
+
+            local stepD = tonumber(spec.StepDelay) or cfg.StepDelay
+            e.idleClock = makeClock(#e.idle, spec.IdleFrameCycle == true,
+                tonumber(spec.IdleFrameSwitchSpeed) or stepD, spec.IdleFrameDelays)
+            e.walkClock = makeClock(#e.walk, spec.WalkFrameCycle == true,
+                tonumber(spec.WalkFrameSwitchSpeed) or stepD, spec.WalkFrameDelays)
+            local mode = tostring(spec.FrameMode or "auto"):lower()
+            if mode ~= "auto" and mode ~= "idle" and mode ~= "walk" and mode ~= "reverse" then mode = "auto" end
+            e.mode = mode
+            e.jump = spec.FrameJump == true
+            e.jumpH = math.max(tonumber(spec.FrameJumpHighestHeight) or cfg.FrameJumpHighestHeight, 0)
+            e.skipJump = toIndexSet(spec.FrameSkipJump, "ExtraBillboards[" .. spec.index .. "].FrameSkipJump")
+            e.sway = tonumber(spec.FrameSwayAmount) or 0
+            e.gui, e.img, e.tex = egui, eimg, e.idle[1]
+            e.idleTime, e.walkTime, e.hopY, e.swayR = 0, 0, 0, 0
+            extras[#extras + 1] = e
+        end
+    end
+
+    local function updateExtra(e, dt, moving, speedMul)
+        local animWalk = animWalkFor(e.mode, moving)
+        local tex, idx, p, stepNo
+        if animWalk then
+            e.walkTime += dt * speedMul
+            e.idleTime = 0
+            idx, p, stepNo = e.walkClock(e.walkTime)
+            tex = e.walk[idx]
+        else
+            e.idleTime += dt
+            e.walkTime = 0
+            tex = e.idle[e.idleClock(e.idleTime)]
+        end
+        if tex ~= e.tex then
+            e.tex = tex
+            e.img.Image = tex
+        end
+        if e.jump or e.sway ~= 0 then
+            if animWalk then
+                e.hopY = (e.jump and not e.skipJump[idx]) and e.jumpH * math.sin(math.pi * p) or 0
+                e.swayR = e.sway * math.sin(math.pi * p) * ((stepNo % 2 == 0) and 1 or -1)
+            else
+                local k = 1 - math.min(1, dt * 18) -- settle back when the walk stops
+                e.hopY *= k
+                e.swayR *= k
+                if e.hopY < 0.001 then e.hopY = 0 end
+                if math.abs(e.swayR) < 0.01 then e.swayR = 0 end
+            end
+            e.gui.StudsOffsetWorldSpace = Vector3.new(0, e.hopY, 0)
+            e.img.Rotation = e.swayR
+        end
+    end
+
     -- main loop
-    local walkSpeed = cfg.WalkFrameSwitchSpeed or 0.2
+    local walkSpeed = cfg.WalkFrameSwitchSpeed or cfg.StepDelay
+    local idleSpeed = cfg.IdleFrameSwitchSpeed or cfg.StepDelay
+    local walkClock = makeClock(#walk, cfg.WalkFrameCycle, walkSpeed, cfg.WalkFrameDelays)
+    local idleClock = makeClock(#idle, cfg.IdleFrameCycle, idleSpeed, cfg.IdleFrameDelays)
     local walkTime, idleTime = 0, 0
     local activeTexture = idle[1]
     local squashY = 1
@@ -1535,7 +1985,7 @@ function Brain.Run(userCfg)
     local nextGlitch, lastTrail = 0, 0
 
     local transformActive = cfg.FrameJiggle or cfg.GlitchEffect or cfg.WobbleEffect
-        or cfg.HoverBob or cfg.BreathEffect or cfg.BoilEffect or cfg.FrameJump
+        or cfg.HoverBob or cfg.BreathEffect or cfg.BoilEffect or cfg.FrameJump or cfg.FrameSwayAmount ~= 0
     local alphaActive = cfg.GhostPulse or cfg.FlickerEffect
     local amp = {wobble = 0, hover = 0, breath = 0}
     local boil = {rot = 0, x = 0, y = 0}
@@ -1588,18 +2038,87 @@ function Brain.Run(userCfg)
         return pathHist[1].p
     end
 
+    -- invisible magnetic field around you: an orb is never allowed inside it. orbs that would pass through
+    -- you (figure8, flower, spiral, snake...) swing around the edge of the field instead of crossing it.
+    -- outside the field's soft edge nothing is changed at all, so normal orbits stay exactly as they were
+    local FIELD_SOFT = 0.5 -- studs of smooth easing at the edge, so orbs curve away instead of bumping
+    local function applyField(o, sp, off, y, dt)
+        local fr = tonumber(sp.FieldRadius) or 0
+        if fr <= 0 or math.abs(y) > (tonumber(sp.FieldHeight) or 4) + sp.Size / 2 then
+            o.fieldAng, o.fieldCatching = nil, false -- no field (or the orb is above/below you)
+            return off
+        end
+        local R = fr + sp.Size / 2 -- the orb's surface stays out of the field, not just its center
+        local x, z = off.X, off.Z
+        local r = math.sqrt(x * x + z * z)
+        local rawAng = math.atan2(z, x)
+        if r >= R + FIELD_SOFT and not o.fieldCatching then
+            o.fieldAng = rawAng -- far away: follow the pattern exactly
+            return off
+        end
+
+        -- near the field: the orb's angle around you may only turn so fast, so when its path would go
+        -- straight through you it slides around the edge instead of jumping to the other side
+        local ang = o.fieldAng or rawAng
+        local diff = 0
+        if r > 0.05 then
+            diff = (rawAng - ang + math.pi) % (2 * math.pi) - math.pi
+            if math.abs(diff) > math.pi - 0.2 then
+                diff = (sp.Speed >= 0 and 1 or -1) * math.abs(diff) -- dead ahead: go around the way it orbits
+            end
+        end
+        local maxStep = math.max(3, 3 * 2 * math.pi * math.abs(sp.Speed)) * dt
+        if math.abs(diff) <= maxStep then
+            ang += diff
+            o.fieldCatching = false
+        else
+            ang += (diff > 0 and 1 or -1) * maxStep
+            o.fieldCatching = true
+        end
+        o.fieldAng = ang
+
+        -- distance from you: never less than R, easing smoothly into the pattern's own distance
+        local s = r - R
+        local rad
+        if s >= FIELD_SOFT then
+            rad = r
+        elseif s <= -FIELD_SOFT then
+            rad = R
+        else
+            rad = R + (s + FIELD_SOFT) ^ 2 / (4 * FIELD_SOFT)
+        end
+        return Vector3.new(math.cos(ang) * rad, off.Y, math.sin(ang) * rad)
+    end
+
+    -- the game decides walk vs idle from Humanoid.Running (speed above a small threshold), not from input
+    local runSpeed = 0
+    conns[#conns + 1] = humanoid.Running:Connect(function(speed) runSpeed = speed end)
+    local swayR = 0
+    local stripImage
+    local sliceNextRoll = 0
+
     local function step(dt)
         local now = os.clock()
-        local moving = humanoid.MoveDirection.Magnitude > 0
 
-        if moving then
-            local mul = 1
-            if cfg.ScaleWalkWithSpeed then
-                local v = root.AssemblyLinearVelocity
-                local flat = Vector3.new(v.X, 0, v.Z).Magnitude
-                mul = math.clamp(flat / 16, 0.4, 3)
-            end
-            walkTime += dt * mul
+        -- walking or not: like the real skin system (Humanoid.Running speed above WalkMagnitude),
+        -- or plain move input when MoveDetection = "input"
+        local moving
+        if cfg.MoveDetection == "input" then
+            moving = humanoid.MoveDirection.Magnitude > 0
+        else
+            moving = runSpeed > cfg.WalkMagnitude
+        end
+
+        local speedMul = 1
+        if cfg.ScaleWalkWithSpeed and moving then
+            local v = root.AssemblyLinearVelocity
+            speedMul = math.clamp(Vector3.new(v.X, 0, v.Z).Magnitude / 16, 0.4, 3)
+        end
+
+        -- which frame set is playing (FrameMode can force idle or walk no matter what you do)
+        local animWalk = animWalkFor(cfg.FrameMode, moving)
+        if animWalk then
+            walkTime += dt * speedMul
             idleTime = 0
         else
             idleTime += dt
@@ -1607,11 +2126,12 @@ function Brain.Run(userCfg)
         end
 
         -- frames
-        local tex, walkIdx
-        if moving then
-            tex, walkIdx = pickFrame(walk, walkTime, walkSpeed, cfg.WalkFrameCycle)
+        local tex, walkIdx, stepP, stepNo
+        if animWalk then
+            walkIdx, stepP, stepNo = walkClock(walkTime)
+            tex = walk[walkIdx]
         else
-            tex = pickFrame(idle, idleTime, cfg.IdleFrameSwitchSpeed, cfg.IdleFrameCycle)
+            tex = idle[idleClock(idleTime)]
         end
         if tex ~= activeTexture then
             activeTexture = tex
@@ -1620,14 +2140,13 @@ function Brain.Run(userCfg)
             if followEmitter then followEmitter.Texture = tex end
         end
 
-        -- stomps: one footstep every time the walk frame switches (same timer as the animation, so
+        -- stomps: one footstep every time the walk frame switches (same clock as the animation, so
         -- ScaleWalkWithSpeed speeds them up too). frames listed in FrameSkipStomp stay silent, and there's
-        -- no sound in the air. the first one plays right as you start walking
+        -- no sound in the air or while you're standing still. the first one plays right as you start walking
         if #stompSounds > 0 then
-            if moving then
-                local walkStep = math.floor(walkTime / math.max(walkSpeed, 0.01))
-                if walkStep ~= lastStomp then
-                    lastStomp = walkStep
+            if animWalk and moving then
+                if stepNo ~= lastStomp then
+                    lastStomp = stepNo
                     if not skipStomp[walkIdx] and humanoid.FloorMaterial ~= Enum.Material.Air then playStomp() end
                 end
             else
@@ -1637,7 +2156,7 @@ function Brain.Run(userCfg)
 
         -- DebugFrames: shows which walk frame is playing and which effects fire on it
         if cfg.DebugFrames then
-            if moving and walkIdx ~= lastDebugIdx then
+            if animWalk and walkIdx ~= lastDebugIdx then
                 lastDebugIdx = walkIdx
                 local function state(enabled, skipSet)
                     if not enabled then return "off" end
@@ -1646,7 +2165,7 @@ function Brain.Run(userCfg)
                 warn(("%swalk frame %d | hop: %s | jiggle: %s | stomp: %s"):format(TAG, walkIdx,
                     state(cfg.FrameJump, skipJump), state(cfg.FrameJiggle, skipJiggle),
                     state(#stompSounds > 0, skipStomp)))
-            elseif not moving then
+            elseif not animWalk then
                 lastDebugIdx = nil
             end
         end
@@ -1659,22 +2178,20 @@ function Brain.Run(userCfg)
         end
 
         -- frame jiggle: squash toward the bottom edge right before one frame change,
-        -- stretch back to normal right before the next, looping. walking only.
+        -- stretch back to normal right before the next, looping. walk frames only.
         if cfg.FrameJiggle then
-            if moving then
-                local stepF = walkTime / math.max(walkSpeed, 0.01)
-                local whole = math.floor(stepF)
-                local e = (stepF - whole) ^ math.max(cfg.FrameJiggleEase, 0.1)
+            if animWalk then
+                local e = stepP ^ math.max(cfg.FrameJiggleEase, 0.1)
                 local amt = cfg.FrameJiggleStrength
                 local target
-                if whole % 2 == 0 then
+                if stepNo % 2 == 0 then
                     target = 1 - amt * e           -- normal -> squashed
                 else
                     target = 1 - amt * (1 - e)     -- squashed -> normal
                 end
                 -- a frame listed in FrameSkipJiggle doesn't jiggle: the sprite eases back to normal for that
                 -- frame, then eases back into the cycle on the next eligible one (so it never pops).
-                -- the timing is still the walk frame timer. with an empty list this is exactly the old jiggle
+                -- the timing is still the walk frame clock. with an empty list this is exactly the old jiggle
                 local skipped = skipJiggle[walkIdx] == true
                 if skipped then target = 1 end
                 if skipped or jiggleEasing then
@@ -1684,7 +2201,7 @@ function Brain.Run(userCfg)
                     squashY = target
                 end
             else
-                -- stopped walking: settle back to normal and stay there
+                -- not walking: settle back to normal and stay there
                 squashY = squashY + (1 - squashY) * math.min(1, dt * 18)
                 jiggleEasing = false
             end
@@ -1701,7 +2218,7 @@ function Brain.Run(userCfg)
             glitch.scale = 1 + (math.random() * 2 - 1) * s * 0.15
         end
 
-        -- shape effects: jiggle/glitch/wobble/hover/breath/boil all combine here
+        -- shape effects: jiggle/glitch/wobble/hover/breath/boil/jump/sway all combine here
         if transformActive then
             local k = math.min(1, dt * 10) -- smooth on/off so nothing snaps when you start/stop walking
             local wobbleTarget = (cfg.WobbleEffect and (moving or cfg.WobbleWhenIdle)) and 1 or 0
@@ -1732,31 +2249,42 @@ function Brain.Run(userCfg)
                 hoverOffset = math.sin(now * cfg.HoverSpeed * 6.2832) * cfg.HoverHeight * amp.hover
             end
 
-            -- frame jump: every walk frame that isn't in FrameSkipJump gets one smooth hop (a parabola that
-            -- starts and ends at 0 across that frame's time slot), so hops follow the walk frame speed
-            -- exactly and always land back on the original position before the next one.
-            -- it's recomputed from the walk timer every frame (never accumulated) and only moves the sprite
+            -- frame jump: the game's own BouncePerStep. every walk step the billboard rises and falls once along a
+            -- Sine ease (a half-sine arc: up for half the step, down for the other half), as a WORLD-space vertical
+            -- offset (StudsOffsetWorldSpace), so the hop follows each frame's own duration exactly and always lands
+            -- back on the original position. frames listed in FrameSkipJump don't hop. never accumulated
             if cfg.FrameJump then
-                if moving then
+                if animWalk then
                     local target = 0
                     if not skipJump[walkIdx] then
-                        local stepF = walkTime / math.max(walkSpeed, 0.01)
-                        local p = stepF - math.floor(stepF)
-                        target = cfg.FrameJumpHighestHeight * 4 * p * (1 - p)
+                        target = cfg.FrameJumpHighestHeight * math.sin(math.pi * stepP)
                     end
                     jumpY = target
                 else
-                    -- stopped walking: settle back to the original position
+                    -- not walking: settle back to the original position
                     jumpY = jumpY * (1 - math.min(1, dt * 18))
                     if jumpY < 0.001 then jumpY = 0 end
                 end
                 jumpOffset = jumpY
+                gui.StudsOffsetWorldSpace = Vector3.new(0, jumpOffset, 0)
+            end
+
+            -- frame sway: the game's SwayAmount. the sprite tips one way on one walk step and the other way on the
+            -- next (same half-sine timing as the bounce)
+            if cfg.FrameSwayAmount ~= 0 then
+                if animWalk then
+                    swayR = cfg.FrameSwayAmount * math.sin(math.pi * stepP) * ((stepNo % 2 == 0) and 1 or -1)
+                else
+                    swayR = swayR * (1 - math.min(1, dt * 18))
+                    if math.abs(swayR) < 0.01 then swayR = 0 end
+                end
+                rot += swayR
             end
 
             holder.Rotation = rot
             holder.Size = UDim2.new(glitch.scale, 0, glitch.scale * scaleY, 0)
             holder.Position = UDim2.new(0.5 + boil.x, 0, 1 + boil.y, 0)
-            gui.StudsOffset = Vector3.new(glitch.x, cfg.studsOffsetY + glitch.y + hoverOffset + jumpOffset, glitch.z)
+            gui.StudsOffset = Vector3.new(glitch.x, cfg.studsOffsetY + glitch.y + hoverOffset, glitch.z)
         end
 
         -- visibility effects: ghost pulse / flicker combine into one transparency
@@ -1791,9 +2319,46 @@ function Brain.Run(userCfg)
             end
         end
 
+        -- horizontal slicing: mirror the sprite onto the strips and slide random strips left and right
+        if #strips > 0 then
+            local simg, scol, str = sprite.Image, sprite.ImageColor3, sprite.ImageTransparency
+            if simg ~= stripImage then
+                stripImage = simg
+                layoutStrips(simg)
+            end
+            if now >= sliceNextRoll then
+                sliceNextRoll = now + cfg.SliceRerollTime
+                for i = 1, #strips do
+                    local st = strips[i]
+                    st.ampTarget = (math.random() < cfg.SliceChance) and (0.3 + 0.7 * math.random()) * cfg.SliceStrength or 0
+                    st.gap = cfg.SliceGapChance > 0 and math.random() < cfg.SliceGapChance
+                end
+            end
+            local ease = math.min(1, dt * 8)
+            for i = 1, #strips do
+                local st = strips[i]
+                st.amp += (st.ampTarget - st.amp) * ease
+                local off = st.amp * math.sin(now * cfg.SliceSpeed * 6.2832 * st.freq + st.phase)
+                local img = st.img
+                if img.Image ~= simg then img.Image = simg end
+                if img.ImageColor3 ~= scol then img.ImageColor3 = scol end
+                local tr = (st.gap and st.amp > 0.02) and 1 or str
+                if img.ImageTransparency ~= tr then img.ImageTransparency = tr end
+                if sliceMode == "rect" then
+                    img.Position = UDim2.new(off, 0, st.y0 or 0, 0)
+                else
+                    img.Position = UDim2.new((off + sliceMargin) / (1 + 2 * sliceMargin), 0, -(i - 1), 0)
+                end
+            end
+        end
+
+        -- extra billboards
+        for i = 1, #extras do updateExtra(extras[i], dt, moving, speedMul) end
+
         -- orbs move in their pattern (circle / figure8 / spiral / flower / snake)
         if #orbs > 0 then
             local center = root.Position
+            if fieldVisual then fieldVisual.CFrame = CFrame.new(center) * CFrame.Angles(0, 0, math.rad(90)) end
             if usesSnake then
                 local last = pathHist[#pathHist]
                 if not last or now - last.t >= 0.03 then
@@ -1813,12 +2378,15 @@ function Brain.Run(userCfg)
                     -- a small swirl keeps them from stacking on top of each other when you stand still
                     local swirl = Vector3.new(math.cos(a), 0, math.sin(a)) * math.min(1.2, sp.Distance)
                     local p = pathAt(now - o.spec.index * (sp.SnakeSpacing or 0.3))
-                    o.part.CFrame = CFrame.new(p + swirl + Vector3.new(0, sp.Height + bob, 0))
+                    local rel = (p + swirl) - center -- where it wants to be, relative to you
+                    rel = applyField(o, sp, rel, rel.Y + sp.Height + bob, dt)
+                    o.part.CFrame = CFrame.new(center + rel + Vector3.new(0, sp.Height + bob, 0))
                 else
                     local offset = orbOffset(sp, a)
                     if sp.Tilt ~= 0 then
                         offset = CFrame.Angles(math.rad(sp.Tilt), 0, 0):VectorToWorldSpace(offset)
                     end
+                    offset = applyField(o, sp, offset, offset.Y + sp.Height + bob, dt)
                     o.part.CFrame = CFrame.new(center + offset + Vector3.new(0, sp.Height + bob, 0))
                 end
                 if o.fires then
@@ -1837,7 +2405,7 @@ function Brain.Run(userCfg)
         end
 
         -- afterimages
-        if cfg.AfterimageEffect then
+        if cfg.AfterimageEffect and not (scareActive and cfg.ScareRemoveAfterimage) then
             local rate = cfg.AfterimageRate
             if now - lastTrail >= rate then
                 lastTrail = now
@@ -1896,6 +2464,8 @@ function Brain.Run(userCfg)
         gui:Destroy()
         if trailHolder then trailHolder:Destroy() end
         if orbHolder then orbHolder:Destroy() end
+        for _, e in ipairs(extras) do e.gui:Destroy() end
+        if scareGui then scareGui:Destroy() end
         wipeDownloads()
         if env.__SkinBrainCleanup == destroy then env.__SkinBrainCleanup = nil end
     end
