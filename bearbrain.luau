@@ -1,4 +1,4 @@
--- SkinBrain v3.2
+-- SkinBrain v3.3
 -- the boring work: downloads/caching, frame logic, billboard, effects, cleanup.
 -- you never need to edit this. all settings live in SkinTemplate.lua.
 -- host it (github raw link) or put it in your executor's workspace as "SkinBrain.lua".
@@ -9,7 +9,7 @@ local ContentProvider = game:GetService("ContentProvider")
 
 local env = (getgenv and getgenv()) or _G
 local TAG = "[SkinBrain] "
-local Brain = {Version = "3.2"}
+local Brain = {Version = "3.3"}
 
 -- --- DEFAULTS ---
 local DEFAULTS = {
@@ -157,7 +157,7 @@ local DEFAULTS = {
 }
 -- settings that are allowed to be nil (so they aren't flagged as typos)
 local OPTIONAL = {WalkFrameSwitchSpeed = true, IdleFrameSwitchSpeed = true, ThemeSound = true, PointLightModifier = true,
-    VoiceLines = true, StompSound = true, OrbOrbit = true, ExtraBillboards = true, ThemeSound2 = true}
+    VoiceLines = true, StompSound = true, OrbOrbit = true, ExtraBillboards = true, ThemeSound2 = true, ReactiveSounds = true}
 
 -- scales a color's saturation/brightness (see ColorSaturation / ColorBrightness)
 local function fixColor(c, cfg)
@@ -1000,6 +1000,12 @@ local function animWalkFor(mode, moving)
     return moving
 end
 
+-- what a reactive sound can listen for
+local REACTIVE_WHEN = {
+    walk = true, run = true, idle = true, move = true, -- states (move = walking or running)
+    start = true, stop = true, jump = true, land = true, -- one-time events
+}
+
 local function mulColor(a, b)
     return Color3.new(a.R * b.R, a.G * b.G, a.B * b.B)
 end
@@ -1104,6 +1110,24 @@ function Brain.Run(userCfg)
         end
     end
 
+    -- reactive sounds: only downloaded when enabled. every entry has a When trigger and one or more sounds
+    local reactiveCfg = type(cfg.ReactiveSounds) == "table" and cfg.ReactiveSounds or nil
+    local reactiveSpecs = {}
+    if reactiveCfg and reactiveCfg.Enabled and type(reactiveCfg.Sounds) == "table" then
+        for i, e in ipairs(reactiveCfg.Sounds) do
+            local when = type(e) == "table" and tostring(e.When or ""):lower() or ""
+            if REACTIVE_WHEN[when] then
+                local spec = {}
+                for k, v in pairs(e) do spec[k] = v end
+                spec.when, spec.index = when, i
+                spec.src = collect(e.Sound, "audio")
+                reactiveSpecs[#reactiveSpecs + 1] = spec
+            else
+                warn(TAG .. "ReactiveSounds entry " .. i .. " needs When = walk, run, idle, move, start, stop, jump or land, skipping it")
+            end
+        end
+    end
+
     -- extra billboards: independent billboards on you, each with its own frames, size, offset and mode
     local extraSpecs = {}
     if type(cfg.ExtraBillboards) == "table" then
@@ -1152,6 +1176,7 @@ function Brain.Run(userCfg)
     end
     local scareImg = frames(scareImgSrc)[1]
     local scareSnd = frames(scareSndSrc)[1]
+    for _, spec in ipairs(reactiveSpecs) do spec.assets = frames(spec.src) end
     info(cfg, ("loaded '%s': %d idle frame(s), %d walk frame(s)"):format(
         cfg.SkinName, #frames(idleSrc), #frames(walkSrc)))
     if #idle == 0 then
@@ -1808,6 +1833,127 @@ function Brain.Run(userCfg)
         end
     end
 
+    -- reactive sounds (optional): sounds that react to what you're doing.
+    --   walk / run / idle / move : play (looping) while that is true and fade out when it stops.
+    --                              with Loop = false they play once each time you enter that state instead
+    --   start / stop             : once when you start / stop moving
+    --   jump / land              : once when you jump / land
+    -- "run" means your running speed is at or above ReactiveSounds.RunSpeed, "walk" is moving slower than that
+    local reactives = {}
+    local reactiveRunSpeed = (reactiveCfg and tonumber(reactiveCfg.RunSpeed)) or 20
+    local pendingJump, pendingLand = false, false
+    for _, spec in ipairs(reactiveSpecs) do
+        if #spec.assets == 0 then
+            warn(TAG .. "reactive sound " .. spec.index .. " (" .. spec.when .. ") has no usable Sound, skipping it")
+        else
+            local r = {
+                spec = spec, when = spec.when, sounds = {}, lastPlay = -1e9, vol = 0, active = false,
+                volume = math.max(tonumber(spec.Volume) or 1, 0),
+                fade = math.max(tonumber(spec.Fade) or 0.15, 0.01),
+                cooldown = math.max(tonumber(spec.Cooldown) or 0.2, 0),
+                pitch = math.max(tonumber(spec.PitchVariation) or 0, 0),
+                speed = tonumber(spec.PlaybackSpeed) or 1,
+            }
+            r.looping = (r.when == "walk" or r.when == "run" or r.when == "idle" or r.when == "move") and spec.Loop ~= false
+            for i, id in ipairs(spec.assets) do
+                local rs = Instance.new("Sound")
+                rs.Name = "SkinBrainReactive" .. spec.index .. "_" .. i
+                rs.SoundId = id
+                rs.Volume = r.looping and 0 or r.volume
+                rs.Looped = r.looping
+                rs.PlaybackSpeed = r.speed
+                if tonumber(spec.RollOffMaxDistance) then rs.RollOffMaxDistance = tonumber(spec.RollOffMaxDistance) end
+                rs.Parent = root
+                sounds[#sounds + 1] = rs
+                r.sounds[i] = rs
+            end
+            reactives[#reactives + 1] = r
+        end
+    end
+    if #reactives > 0 then
+        conns[#conns + 1] = humanoid.StateChanged:Connect(function(_, new)
+            if new == Enum.HumanoidStateType.Jumping then
+                pendingJump = true
+            elseif new == Enum.HumanoidStateType.Landed then
+                pendingLand = true
+            end
+        end)
+    end
+    local prevMoving, prevRunning = false, false
+
+    local function updateReactive(dt, now, moving, speed)
+        if #reactives == 0 then return end
+        local running = moving and speed >= reactiveRunSpeed
+        local walking = moving and not running
+        local jumped, landed = pendingJump, pendingLand
+        pendingJump, pendingLand = false, false
+
+        for i = 1, #reactives do
+            local r = reactives[i]
+            local when = r.when
+            local cond
+            if when == "walk" then cond = walking
+            elseif when == "run" then cond = running
+            elseif when == "idle" then cond = not moving
+            elseif when == "move" then cond = moving end
+
+            if r.looping then
+                -- plays while the state is true, fading in and out so it never cuts off hard
+                if cond and not r.active then
+                    r.active = true
+                    if not r.current then -- (if it was still fading out, just bring it back up)
+                        r.current = r.sounds[math.random(#r.sounds)]
+                        r.current.Volume = r.vol
+                        r.current:Play()
+                    end
+                elseif not cond and r.active then
+                    r.active = false
+                end
+                local target = cond and r.volume or 0
+                local stepV = math.max(r.volume, 0.01) * dt / r.fade
+                if r.vol < target then
+                    r.vol = math.min(target, r.vol + stepV)
+                elseif r.vol > target then
+                    r.vol = math.max(target, r.vol - stepV)
+                end
+                if r.current then
+                    r.current.Volume = r.vol
+                    if r.vol <= 0.001 and not r.active then
+                        r.current:Stop()
+                        r.current = nil
+                    end
+                end
+            else
+                -- one-shots
+                local fire = false
+                if when == "start" then
+                    fire = moving and not prevMoving
+                elseif when == "stop" then
+                    fire = (not moving) and prevMoving
+                elseif when == "jump" then
+                    fire = jumped
+                elseif when == "land" then
+                    fire = landed
+                else -- walk/run/idle/move with Loop = false: once each time you enter that state
+                    local was
+                    if when == "walk" then was = prevMoving and not prevRunning
+                    elseif when == "run" then was = prevRunning
+                    elseif when == "idle" then was = not prevMoving
+                    else was = prevMoving end
+                    fire = cond and not was
+                end
+                if fire and now - r.lastPlay >= r.cooldown then
+                    r.lastPlay = now
+                    local snd = r.sounds[math.random(#r.sounds)]
+                    if r.pitch > 0 then snd.PlaybackSpeed = r.speed * (1 + (math.random() * 2 - 1) * r.pitch) end
+                    snd.TimePosition = 0
+                    snd:Play()
+                end
+            end
+        end
+        prevMoving, prevRunning = moving, running
+    end
+
     -- scare event (optional, TBB style): every ScareInterval seconds the scare image appears over your skin
     -- (its own billboard, in front) and the scare sound plays. when the sound ends, the scare ends: the image
     -- disappears and anything hidden for it (your skin / the afterimage) comes back
@@ -1892,7 +2038,8 @@ function Brain.Run(userCfg)
     end
 
     -- extra billboards (optional): each one is its own BillboardGui with its own frames, clocks, size, offset and mode.
-    -- studsOffsetZ decides who is in front: positive = nearer the camera (in front of your main skin), negative = behind it
+    -- ZOffset (or studsOffsetZ) layers it: positive = in front of your main skin, negative = behind it.
+    -- it moves along the camera's view direction, so it changes the draw order without moving it on screen
     local extras = {}
     for _, spec in ipairs(extraSpecs) do
         if #spec.idle == 0 then
@@ -1908,7 +2055,7 @@ function Brain.Run(userCfg)
             pcall(function() egui.Brightness = tonumber(spec.Brightness) or cfg.Brightness end)
             egui.Size = UDim2.new(tonumber(spec.sizeX) or cfg.sizeX, 0, tonumber(spec.sizeY) or cfg.sizeY, 0)
             egui.StudsOffset = Vector3.new(tonumber(spec.studsOffsetX) or 0,
-                tonumber(spec.studsOffsetY) or cfg.studsOffsetY, tonumber(spec.studsOffsetZ) or 0)
+                tonumber(spec.studsOffsetY) or cfg.studsOffsetY, tonumber(spec.ZOffset) or tonumber(spec.studsOffsetZ) or 0)
             egui.Parent = root
 
             local eimg = Instance.new("ImageLabel")
@@ -1931,6 +2078,8 @@ function Brain.Run(userCfg)
             if mode ~= "auto" and mode ~= "idle" and mode ~= "walk" and mode ~= "reverse" then mode = "auto" end
             e.mode = mode
             e.jump = spec.FrameJump == true
+            -- its own timing: StepDelay / *FrameSwitchSpeed / *FrameDelays above, and its own ScaleWalkWithSpeed too
+            e.scaleWalk = (spec.ScaleWalkWithSpeed == nil) and cfg.ScaleWalkWithSpeed or spec.ScaleWalkWithSpeed == true
             e.jumpH = math.max(tonumber(spec.FrameJumpHighestHeight) or cfg.FrameJumpHighestHeight, 0)
             e.skipJump = toIndexSet(spec.FrameSkipJump, "ExtraBillboards[" .. spec.index .. "].FrameSkipJump")
             e.sway = tonumber(spec.FrameSwayAmount) or 0
@@ -1940,11 +2089,11 @@ function Brain.Run(userCfg)
         end
     end
 
-    local function updateExtra(e, dt, moving, speedMul)
+    local function updateExtra(e, dt, moving, rawMul)
         local animWalk = animWalkFor(e.mode, moving)
         local tex, idx, p, stepNo
         if animWalk then
-            e.walkTime += dt * speedMul
+            e.walkTime += dt * (e.scaleWalk and rawMul or 1)
             e.idleTime = 0
             idx, p, stepNo = e.walkClock(e.walkTime)
             tex = e.walk[idx]
@@ -2109,11 +2258,14 @@ function Brain.Run(userCfg)
             moving = runSpeed > cfg.WalkMagnitude
         end
 
-        local speedMul = 1
-        if cfg.ScaleWalkWithSpeed and moving then
+        -- how fast you're really moving, as a speed multiplier (the main skin and each extra billboard can
+        -- choose separately whether their animation follows it)
+        local rawMul = 1
+        if moving then
             local v = root.AssemblyLinearVelocity
-            speedMul = math.clamp(Vector3.new(v.X, 0, v.Z).Magnitude / 16, 0.4, 3)
+            rawMul = math.clamp(Vector3.new(v.X, 0, v.Z).Magnitude / 16, 0.4, 3)
         end
+        local speedMul = cfg.ScaleWalkWithSpeed and rawMul or 1
 
         -- which frame set is playing (FrameMode can force idle or walk no matter what you do)
         local animWalk = animWalkFor(cfg.FrameMode, moving)
@@ -2124,6 +2276,9 @@ function Brain.Run(userCfg)
             idleTime += dt
             walkTime = 0
         end
+
+        -- reactive sounds follow what you're really doing (not a forced FrameMode)
+        updateReactive(dt, now, moving, runSpeed)
 
         -- frames
         local tex, walkIdx, stepP, stepNo
@@ -2353,7 +2508,7 @@ function Brain.Run(userCfg)
         end
 
         -- extra billboards
-        for i = 1, #extras do updateExtra(extras[i], dt, moving, speedMul) end
+        for i = 1, #extras do updateExtra(extras[i], dt, moving, rawMul) end
 
         -- orbs move in their pattern (circle / figure8 / spiral / flower / snake)
         if #orbs > 0 then
