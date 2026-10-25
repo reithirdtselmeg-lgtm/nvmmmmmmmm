@@ -1,4 +1,4 @@
--- SkinBrain v3.3
+-- SkinBrain v3.4
 -- the boring work: downloads/caching, frame logic, billboard, effects, cleanup.
 -- you never need to edit this. all settings live in SkinTemplate.lua.
 -- host it (github raw link) or put it in your executor's workspace as "SkinBrain.lua".
@@ -9,7 +9,7 @@ local ContentProvider = game:GetService("ContentProvider")
 
 local env = (getgenv and getgenv()) or _G
 local TAG = "[SkinBrain] "
-local Brain = {Version = "3.3"}
+local Brain = {Version = "3.4"}
 
 -- --- DEFAULTS ---
 local DEFAULTS = {
@@ -1375,6 +1375,7 @@ function Brain.Run(userCfg)
     local trailHolder, trailPart
     local emitters, emitTimes = {}, {}
     local followEmitter -- only used when AfterimageFollowFrame is on
+    local ghostsReady = not cfg.AfterimageEffect -- ghosts are held back until their textures are preloaded
     local currentColor = cfg.Tint
     local hoverOffset = 0
     local jumpOffset = 0 -- FrameJump's hop height, kept separate from hover so they just add together
@@ -1460,9 +1461,52 @@ function Brain.Run(userCfg)
                 end
             end
         end
+
+        -- preload + warm up. a texture an emitter hasn't drawn yet shows up a moment late, which looks like ghosts
+        -- flickering or vanishing for a frame (worst with AfterimageFollowFrame, which keeps swapping the emitter's
+        -- Texture). so: preload every texture, make each one draw once (tiny and almost invisible), and hold the
+        -- real ghosts back until that's done
+        local warm, seenTex, toPreload = {}, {}, {}
+        if followEmitter then toPreload[#toPreload + 1] = followEmitter end
+        for _, em in pairs(emitters) do toPreload[#toPreload + 1] = em end
+        for _, set in ipairs({idle, walk}) do
+            for _, id in ipairs(set) do
+                if not seenTex[id] then
+                    seenTex[id] = true
+                    local w = Instance.new("ParticleEmitter")
+                    w.Texture = id
+                    w.Rate = 0
+                    w.Speed = NumberRange.new(0)
+                    w.LockedToPart = false
+                    w.Lifetime = NumberRange.new(0.7, 0.7)
+                    w.Size = NumberSequence.new(0.3)
+                    w.Transparency = NumberSequence.new(0.98)
+                    w.ZOffset = cfg.AfterimageZOffset
+                    w.Parent = attach
+                    warm[#warm + 1] = w
+                    toPreload[#toPreload + 1] = w
+                end
+            end
+        end
+        task.spawn(function()
+            local done = false
+            local t0 = os.clock()
+            task.spawn(function()
+                pcall(ContentProvider.PreloadAsync, ContentProvider, toPreload)
+                done = true
+            end)
+            while not done and os.clock() - t0 < 3 do task.wait(0.05) end
+            if not alive then return end
+            for _, w in ipairs(warm) do w:Emit(1) end -- each texture draws once...
+            task.wait(0.35)                           -- ...and gets a few frames to be uploaded
+            for _, w in ipairs(warm) do w:Destroy() end
+            ghostsReady = true
+            info(cfg, "afterimage textures preloaded")
+        end)
     end
 
     local function spawnAfterimage(texture, moving)
+        if not ghostsReady then return end
         local em = followEmitter or emitters[texture]
         if not em then return end
 
