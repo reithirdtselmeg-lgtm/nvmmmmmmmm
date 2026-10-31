@@ -1,4 +1,4 @@
--- SkinBrain v3.4
+-- SkinBrain v3.5
 -- the boring work: downloads/caching, frame logic, billboard, effects, cleanup.
 -- you never need to edit this. all settings live in SkinTemplate.lua.
 -- host it (github raw link) or put it in your executor's workspace as "SkinBrain.lua".
@@ -9,7 +9,7 @@ local ContentProvider = game:GetService("ContentProvider")
 
 local env = (getgenv and getgenv()) or _G
 local TAG = "[SkinBrain] "
-local Brain = {Version = "3.4"}
+local Brain = {Version = "3.5"}
 
 -- --- DEFAULTS ---
 local DEFAULTS = {
@@ -77,7 +77,7 @@ local DEFAULTS = {
     AfterimageDistort = true,
     AfterimageDistortAmount = 0.15, -- how much each ghost is squashed/stretched and enlarged (0.15 = up to ~15%)
     AfterimageDistortRotation = 0, -- random tilt per ghost in degrees (0 = none)
-    AfterimageFollowFrame = false, -- true = like TBB: one emitter whose texture always matches the billboard's current frame
+    AfterimageFollowFrame = false, -- true = like TBB: every ghost always shows the billboard's CURRENT frame (no texture swapping, so no flicker)
     AfterimageSizeScale = 0.5,     -- multiplies the size of each ghost
     AfterimageGrow = 0,            -- 0 = ghosts keep their size and just fade out. 0.2 = they grow 20% by the end
     AfterimageLightEmission = 0.5, -- 0 = normal, 1 = glowing/additive (great with rainbow)
@@ -1374,7 +1374,10 @@ function Brain.Run(userCfg)
     -- and we fire the one that matches the frame you're currently showing
     local trailHolder, trailPart
     local emitters, emitTimes = {}, {}
-    local followEmitter -- only used when AfterimageFollowFrame is on
+    -- follow-frame mode: every ghost is emitted from ALL the frame emitters at once, and only the emitter of the
+    -- billboard's current frame has a visible size. so the ghosts follow the animation without any emitter ever
+    -- swapping its Texture (swapping a live emitter's texture is what made ghosts flicker)
+    local ghostSizeVisible, ghostSizeHidden, ghostFrameId
     local ghostsReady = not cfg.AfterimageEffect -- ghosts are held back until their textures are preloaded
     local currentColor = cfg.Tint
     local hoverOffset = 0
@@ -1417,6 +1420,12 @@ function Brain.Run(userCfg)
         local squashEnv = math.min(d, math.max(0, 0.95 - math.abs(squash)))
         local spin = cfg.AfterimageDistort and cfg.AfterimageDistortRotation or 0
 
+        ghostSizeVisible = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, sizeStart, envStart),
+            NumberSequenceKeypoint.new(1, sizeFinish, envFinish),
+        })
+        ghostSizeHidden = NumberSequence.new(0)
+
         local function makeGhostEmitter(texture)
             local em = Instance.new("ParticleEmitter")
             em.Texture = texture
@@ -1437,10 +1446,7 @@ function Brain.Run(userCfg)
             em.Lifetime = NumberRange.new(cfg.AfterimageFadeTime, cfg.AfterimageFadeTime)
             em.Color = ColorSequence.new(currentColor)
             em.Transparency = NumberSequence.new(cfg.AfterimageTransparency, 1)
-            em.Size = NumberSequence.new({
-                NumberSequenceKeypoint.new(0, sizeStart, envStart),
-                NumberSequenceKeypoint.new(1, sizeFinish, envFinish),
-            })
+            em.Size = ghostSizeVisible
             em.Squash = NumberSequence.new({
                 NumberSequenceKeypoint.new(0, squash, squashEnv),
                 NumberSequenceKeypoint.new(1, squash, squashEnv),
@@ -1449,16 +1455,17 @@ function Brain.Run(userCfg)
             return em
         end
 
+        -- one emitter per frame, each with its texture set once and never changed
+        for _, set in ipairs({idle, walk}) do
+            for _, id in ipairs(set) do
+                if not emitters[id] then emitters[id] = makeGhostEmitter(id) end
+            end
+        end
         if cfg.AfterimageFollowFrame then
-            -- like TBB: ONE emitter, and its Texture is set to the billboard's current frame every time the
-            -- frame changes (so the live ghosts follow the sprite's animation too)
-            followEmitter = makeGhostEmitter(idle[1])
-        else
-            -- default: one emitter per frame, and each ghost keeps the frame it was born with
-            for _, set in ipairs({idle, walk}) do
-                for _, id in ipairs(set) do
-                    if not emitters[id] then emitters[id] = makeGhostEmitter(id) end
-                end
+            -- follow mode: only the current frame's emitter is visible (the others are size 0 until their frame comes)
+            ghostFrameId = idle[1]
+            for id, em in pairs(emitters) do
+                if id ~= ghostFrameId then em.Size = ghostSizeHidden end
             end
         end
 
@@ -1467,8 +1474,6 @@ function Brain.Run(userCfg)
         -- Texture). so: preload every texture, make each one draw once (tiny and almost invisible), and hold the
         -- real ghosts back until that's done
         local warm, seenTex, toPreload = {}, {}, {}
-        if followEmitter then toPreload[#toPreload + 1] = followEmitter end
-        for _, em in pairs(emitters) do toPreload[#toPreload + 1] = em end
         for _, set in ipairs({idle, walk}) do
             for _, id in ipairs(set) do
                 if not seenTex[id] then
@@ -1507,8 +1512,7 @@ function Brain.Run(userCfg)
 
     local function spawnAfterimage(texture, moving)
         if not ghostsReady then return end
-        local em = followEmitter or emitters[texture]
-        if not em then return end
+        if not emitters[texture] then return end
 
         local now = os.clock()
 
@@ -1527,8 +1531,27 @@ function Brain.Run(userCfg)
         local hop = Vector3.new(0, jumpOffset, 0) -- the hop is a world-space offset, like in the game
         trailPart.CFrame = CFrame.new(root.Position + (cam and cam.CFrame:VectorToWorldSpace(up) or up) + hop)
 
-        if cfg.RainbowKeyframeColor then em.Color = ColorSequence.new(currentColor) end
-        em:Emit(1)
+        local color = cfg.RainbowKeyframeColor and ColorSequence.new(currentColor) or nil
+        if cfg.AfterimageFollowFrame then
+            -- the same ghost is born in every frame emitter, only the current frame's one can be seen
+            for _, em in pairs(emitters) do
+                if color then em.Color = color end
+                em:Emit(1)
+            end
+        else
+            local em = emitters[texture]
+            if color then em.Color = color end
+            em:Emit(1)
+        end
+    end
+
+    -- follow-frame mode: when the billboard changes frame, make that frame's emitter the visible one
+    local function setGhostFrame(tex)
+        if not (cfg.AfterimageFollowFrame and ghostSizeHidden) or ghostFrameId == tex then return end
+        local old, new = emitters[ghostFrameId], emitters[tex]
+        if old then old.Size = ghostSizeHidden end
+        if new then new.Size = ghostSizeVisible end
+        ghostFrameId = tex
     end
 
     -- hide the real character (optional)
@@ -2052,7 +2075,6 @@ function Brain.Run(userCfg)
                     if cfg.ScareRemoveBear then gui.Enabled = false end
                     if cfg.ScareRemoveAfterimage then
                         for _, em in pairs(emitters) do em:Clear() end
-                        if followEmitter then followEmitter:Clear() end
                     end
 
                     -- ...and ends when the sound ends (with a safety limit so your skin can never get stuck hidden)
@@ -2336,7 +2358,7 @@ function Brain.Run(userCfg)
             activeTexture = tex
             sprite.Image = tex
             for i = 1, #layers do layers[i].gui.Image = tex end
-            if followEmitter then followEmitter.Texture = tex end
+            setGhostFrame(tex)
         end
 
         -- stomps: one footstep every time the walk frame switches (same clock as the animation, so
