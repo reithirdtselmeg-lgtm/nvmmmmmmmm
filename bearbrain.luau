@@ -1,4 +1,4 @@
--- SkinBrain v3.5
+-- SkinBrain v3.6
 -- the boring work: downloads/caching, frame logic, billboard, effects, cleanup.
 -- you never need to edit this. all settings live in SkinTemplate.lua.
 -- host it (github raw link) or put it in your executor's workspace as "SkinBrain.lua".
@@ -9,7 +9,7 @@ local ContentProvider = game:GetService("ContentProvider")
 
 local env = (getgenv and getgenv()) or _G
 local TAG = "[SkinBrain] "
-local Brain = {Version = "3.5"}
+local Brain = {Version = "3.6"}
 
 -- --- DEFAULTS ---
 local DEFAULTS = {
@@ -53,6 +53,7 @@ local DEFAULTS = {
     FrameSkipJump = {},            -- walk frame numbers (1 = first walk sprite) that do NOT hop. empty = none skipped
     FrameSkipStomp = {},           -- walk frame numbers (1 = first walk sprite) that stay silent (no footstep). empty = none skipped
     FrameSwayAmount = 0,           -- degrees: the sprite sways left/right on alternate walk steps (the game's SwayAmount). 0 = off
+    FrameBounceStyle = "step",     -- which of the game's two bounce systems: step = BouncePerStep (hops once every walk step) | alternate = BouncePerStep2 (rises on odd walk frames, falls on even ones, sway rocks side to side)
 
     GlitchEffect = false,
     GlitchStrength = 0.1,
@@ -219,6 +220,7 @@ local function buildConfig(user)
         mode = "auto"
     end
     cfg.FrameMode = mode
+    cfg.FrameBounceStyle = (tostring(cfg.FrameBounceStyle):lower() == "alternate") and "alternate" or "step"
     cfg.MoveDetection = (tostring(cfg.MoveDetection):lower() == "input") and "input" or "game"
     cfg.ColorSaturation = math.max(cfg.ColorSaturation, 0)
     cfg.ColorBrightness = math.max(cfg.ColorBrightness, 0)
@@ -1010,6 +1012,44 @@ local function mulColor(a, b)
     return Color3.new(a.R * b.R, a.G * b.G, a.B * b.B)
 end
 
+-- the game's walk bounce + sway for one billboard. st = {y, r, lastStep, fromY, fromR}; returns hop height and sway angle.
+--   style "step"      = the game's BouncePerStep: every walk step the skin rises and falls once (a half-sine) and the sway
+--                       tips out and back to center, on alternating sides
+--   style "alternate" = the game's BouncePerStep2: on odd walk frames the skin RISES (Sine Out) and on even frames it
+--                       FALLS (Sine In), and the sway rocks from one side to the other (+S, then -S, then +S...).
+--                       each move starts from wherever the skin is at that moment, exactly like a tween does
+-- frames in skip (FrameSkipJump) don't hop. everything comes from the walk clock, nothing is accumulated
+local function stepBounce(st, style, active, idx, p, stepNo, height, sway, skip, dt)
+    if not active then
+        local k = 1 - math.min(1, dt * 18) -- the walk stopped: settle back to rest
+        st.y *= k
+        st.r *= k
+        if st.y < 0.001 then st.y = 0 end
+        if math.abs(st.r) < 0.01 then st.r = 0 end
+        st.lastStep = nil
+        return st.y, st.r
+    end
+    local skipped = skip ~= nil and skip[idx] == true
+    if style == "alternate" then
+        if stepNo ~= st.lastStep then
+            st.lastStep = stepNo
+            st.fromY, st.fromR = st.y, st.r
+        end
+        local odd = idx % 2 == 1
+        local e = odd and math.sin(p * math.pi / 2) or (1 - math.cos(p * math.pi / 2)) -- Sine Out / Sine In
+        local toY = (odd and not skipped) and height or 0
+        st.y = st.fromY + (toY - st.fromY) * e
+        if sway ~= 0 then
+            local toR = odd and sway or -sway
+            st.r = st.fromR + (toR - st.fromR) * e
+        end
+    else
+        st.y = skipped and 0 or height * math.sin(math.pi * p)
+        if sway ~= 0 then st.r = sway * math.sin(math.pi * p) * ((stepNo % 2 == 0) and 1 or -1) end
+    end
+    return st.y, st.r
+end
+
 -- removes the current skin (if any)
 function Brain.Stop()
     if env.__SkinBrainCleanup then
@@ -1080,12 +1120,19 @@ function Brain.Run(userCfg)
             Pattern = "circle",                      -- circle | figure8 | spiral | flower | snake
             PatternPetals = 3,                       -- flower only: petal count
             SnakeSpacing = 0.3,                      -- snake only: seconds between each orb along your path
+            Wobble = 0,                              -- degrees the whole ring rocks back and forth (the game's LordOrbs rock 1 degree)
+            WobbleSpeed = 0.0625,                    -- rocks per second (0.0625 = once every 16 seconds, like the game)
             FieldRadius = 3,                         -- invisible magnetic field: studs from your center that orbs never enter (0 = off)
             FieldHeight = 4,                         -- how far up/down from your center the field reaches
             ImageFrameSpeed = 0.1,                   -- seconds per frame for gif/multi-frame image orbs
         }
+        -- Preset = "lord": the game's own LordOrbs numbers (ring radius 5, one orbit every 6 seconds, rocks +-1 degree
+        -- once every 16 seconds). anything you set yourself still wins
+        if tostring(orbCfg.Preset or ""):lower() == "lord" then
+            shared.Distance, shared.Speed, shared.Wobble, shared.WobbleSpeed = 5, 1 / 6, 1, 0.0625
+        end
         for k, v in pairs(orbCfg) do
-            if k ~= "Enabled" and k ~= "Orbs" and k ~= "Count" then shared[k] = v end
+            if k ~= "Enabled" and k ~= "Orbs" and k ~= "Count" and k ~= "Preset" then shared[k] = v end
         end
         local entries = (type(orbCfg.Orbs) == "table" and #orbCfg.Orbs > 0) and orbCfg.Orbs or nil
         local n = entries and #entries or math.max(math.floor(orbCfg.Count or 1), 1)
@@ -1660,6 +1707,14 @@ function Brain.Run(userCfg)
         end
     end
 
+    -- which walk frames get a footstep: all (default), odd (what the game does) or even
+    local stompParity = stompCfg and tostring(stompCfg.Frames or "all"):lower() or "all"
+    local function stompFrameOk(idx)
+        if stompParity == "odd" then return idx % 2 == 1 end
+        if stompParity == "even" then return idx % 2 == 0 end
+        return true
+    end
+
     local function playStomp()
         local n = #stompSounds
         local pick = math.random(n)
@@ -2146,6 +2201,9 @@ function Brain.Run(userCfg)
             e.jump = spec.FrameJump == true
             -- its own timing: StepDelay / *FrameSwitchSpeed / *FrameDelays above, and its own ScaleWalkWithSpeed too
             e.scaleWalk = (spec.ScaleWalkWithSpeed == nil) and cfg.ScaleWalkWithSpeed or spec.ScaleWalkWithSpeed == true
+            local style = tostring(spec.FrameBounceStyle or cfg.FrameBounceStyle):lower()
+            e.style = (style == "alternate") and "alternate" or "step"
+            e.bounce = {y = 0, r = 0, fromY = 0, fromR = 0}
             e.jumpH = math.max(tonumber(spec.FrameJumpHighestHeight) or cfg.FrameJumpHighestHeight, 0)
             e.skipJump = toIndexSet(spec.FrameSkipJump, "ExtraBillboards[" .. spec.index .. "].FrameSkipJump")
             e.sway = tonumber(spec.FrameSwayAmount) or 0
@@ -2173,18 +2231,10 @@ function Brain.Run(userCfg)
             e.img.Image = tex
         end
         if e.jump or e.sway ~= 0 then
-            if animWalk then
-                e.hopY = (e.jump and not e.skipJump[idx]) and e.jumpH * math.sin(math.pi * p) or 0
-                e.swayR = e.sway * math.sin(math.pi * p) * ((stepNo % 2 == 0) and 1 or -1)
-            else
-                local k = 1 - math.min(1, dt * 18) -- settle back when the walk stops
-                e.hopY *= k
-                e.swayR *= k
-                if e.hopY < 0.001 then e.hopY = 0 end
-                if math.abs(e.swayR) < 0.01 then e.swayR = 0 end
-            end
-            e.gui.StudsOffsetWorldSpace = Vector3.new(0, e.hopY, 0)
-            e.img.Rotation = e.swayR
+            local h, r = stepBounce(e.bounce, e.style, animWalk, idx, p, stepNo,
+                e.jump and e.jumpH or 0, e.sway, e.skipJump, dt)
+            if e.jump then e.gui.StudsOffsetWorldSpace = Vector3.new(0, h, 0) end
+            e.img.Rotation = r
         end
     end
 
@@ -2211,7 +2261,7 @@ function Brain.Run(userCfg)
     local skipJiggle = toIndexSet(cfg.FrameSkipJiggle, "FrameSkipJiggle")
     local skipStomp = toIndexSet(cfg.FrameSkipStomp, "FrameSkipStomp")
     local lastDebugIdx
-    local jumpY = 0
+    local bounce = {y = 0, r = 0, fromY = 0, fromR = 0} -- state for stepBounce
     local jiggleEasing = false
 
     -- orb patterns. offsets are around you, in world axes (so they don't turn when you turn)
@@ -2308,7 +2358,6 @@ function Brain.Run(userCfg)
     -- the game decides walk vs idle from Humanoid.Running (speed above a small threshold), not from input
     local runSpeed = 0
     conns[#conns + 1] = humanoid.Running:Connect(function(speed) runSpeed = speed end)
-    local swayR = 0
     local stripImage
     local sliceNextRoll = 0
 
@@ -2368,7 +2417,7 @@ function Brain.Run(userCfg)
             if animWalk and moving then
                 if stepNo ~= lastStomp then
                     lastStomp = stepNo
-                    if not skipStomp[walkIdx] and humanoid.FloorMaterial ~= Enum.Material.Air then playStomp() end
+                    if not skipStomp[walkIdx] and stompFrameOk(walkIdx) and humanoid.FloorMaterial ~= Enum.Material.Air then playStomp() end
                 end
             else
                 lastStomp = -1
@@ -2470,36 +2519,15 @@ function Brain.Run(userCfg)
                 hoverOffset = math.sin(now * cfg.HoverSpeed * 6.2832) * cfg.HoverHeight * amp.hover
             end
 
-            -- frame jump: the game's own BouncePerStep. every walk step the billboard rises and falls once along a
-            -- Sine ease (a half-sine arc: up for half the step, down for the other half), as a WORLD-space vertical
-            -- offset (StudsOffsetWorldSpace), so the hop follows each frame's own duration exactly and always lands
-            -- back on the original position. frames listed in FrameSkipJump don't hop. never accumulated
-            if cfg.FrameJump then
-                if animWalk then
-                    local target = 0
-                    if not skipJump[walkIdx] then
-                        target = cfg.FrameJumpHighestHeight * math.sin(math.pi * stepP)
-                    end
-                    jumpY = target
-                else
-                    -- not walking: settle back to the original position
-                    jumpY = jumpY * (1 - math.min(1, dt * 18))
-                    if jumpY < 0.001 then jumpY = 0 end
-                end
-                jumpOffset = jumpY
-                gui.StudsOffsetWorldSpace = Vector3.new(0, jumpOffset, 0)
-            end
-
-            -- frame sway: the game's SwayAmount. the sprite tips one way on one walk step and the other way on the
-            -- next (same half-sine timing as the bounce)
-            if cfg.FrameSwayAmount ~= 0 then
-                if animWalk then
-                    swayR = cfg.FrameSwayAmount * math.sin(math.pi * stepP) * ((stepNo % 2 == 0) and 1 or -1)
-                else
-                    swayR = swayR * (1 - math.min(1, dt * 18))
-                    if math.abs(swayR) < 0.01 then swayR = 0 end
-                end
-                rot += swayR
+            -- frame jump + sway: the game's own animation (see stepBounce). the hop is a WORLD-space vertical offset
+            -- (StudsOffsetWorldSpace) driven by each frame's own duration, so it always lands back on the original
+            -- position. frames listed in FrameSkipJump don't hop
+            if cfg.FrameJump or cfg.FrameSwayAmount ~= 0 then
+                local h, r = stepBounce(bounce, cfg.FrameBounceStyle, animWalk, walkIdx, stepP, stepNo,
+                    cfg.FrameJump and cfg.FrameJumpHighestHeight or 0, cfg.FrameSwayAmount, skipJump, dt)
+                jumpOffset = h
+                if cfg.FrameJump then gui.StudsOffsetWorldSpace = Vector3.new(0, jumpOffset, 0) end
+                rot += r
             end
 
             holder.Rotation = rot
@@ -2606,6 +2634,10 @@ function Brain.Run(userCfg)
                     local offset = orbOffset(sp, a)
                     if sp.Tilt ~= 0 then
                         offset = CFrame.Angles(math.rad(sp.Tilt), 0, 0):VectorToWorldSpace(offset)
+                    end
+                    if sp.Wobble ~= 0 then -- the ring slowly rocks (tips about the forward axis), like the game's orbs
+                        local w = math.rad(sp.Wobble) * math.sin(now * sp.WobbleSpeed * 6.2832)
+                        offset = CFrame.Angles(0, 0, w):VectorToWorldSpace(offset)
                     end
                     offset = applyField(o, sp, offset, offset.Y + sp.Height + bob, dt)
                     o.part.CFrame = CFrame.new(center + offset + Vector3.new(0, sp.Height + bob, 0))
