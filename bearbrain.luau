@@ -1,4 +1,4 @@
--- SkinBrain v3.6
+-- SkinBrain v3.8
 -- the boring work: downloads/caching, frame logic, billboard, effects, cleanup.
 -- you never need to edit this. all settings live in SkinTemplate.lua.
 -- host it (github raw link) or put it in your executor's workspace as "SkinBrain.lua".
@@ -9,7 +9,7 @@ local ContentProvider = game:GetService("ContentProvider")
 
 local env = (getgenv and getgenv()) or _G
 local TAG = "[SkinBrain] "
-local Brain = {Version = "3.6"}
+local Brain = {Version = "3.8"}
 
 -- --- DEFAULTS ---
 local DEFAULTS = {
@@ -143,6 +143,9 @@ local DEFAULTS = {
     ScareSound = "https://imgg.fr/r/pCyKOKME.mp3",
     ScareVolume = 4,
     ScareFallbackTime = 2,         -- seconds the scare lasts if the sound can't play
+    ScareMainWeight = 1,           -- how likely the main scare (ScareImage / ScareSound) is picked among the ScareVariants (0 = never)
+    ScarePick = "random",          -- random (never the same scare twice in a row) | order (cycles through them)
+    ScareShake = 0,                -- studs the scare image shakes (each variant can set its own Shake)
 
     -- downloads / logging
     ForceRedownload = false,
@@ -158,7 +161,7 @@ local DEFAULTS = {
 }
 -- settings that are allowed to be nil (so they aren't flagged as typos)
 local OPTIONAL = {WalkFrameSwitchSpeed = true, IdleFrameSwitchSpeed = true, ThemeSound = true, PointLightModifier = true,
-    VoiceLines = true, StompSound = true, OrbOrbit = true, ExtraBillboards = true, ThemeSound2 = true, ReactiveSounds = true}
+    VoiceLines = true, StompSound = true, OrbOrbit = true, ExtraBillboards = true, ThemeSound2 = true, ReactiveSounds = true, ScareVariants = true}
 
 -- scales a color's saturation/brightness (see ColorSaturation / ColorBrightness)
 local function fixColor(c, cfg)
@@ -208,6 +211,9 @@ local function buildConfig(user)
     cfg.ScareInterval = math.max(cfg.ScareInterval, 1)
     cfg.ScareVolume = math.clamp(cfg.ScareVolume, 0, 10)
     cfg.ScareFallbackTime = math.max(cfg.ScareFallbackTime, 0.2)
+    cfg.ScareMainWeight = math.max(cfg.ScareMainWeight, 0)
+    cfg.ScareShake = math.max(cfg.ScareShake, 0)
+    cfg.ScarePick = (tostring(cfg.ScarePick):lower() == "order") and "order" or "random"
     cfg.WalkMagnitude = math.max(cfg.WalkMagnitude, 0)
     cfg.SliceCount = math.clamp(math.floor(cfg.SliceCount), 2, 200)
     cfg.SliceStrength = math.max(cfg.SliceStrength, 0)
@@ -1092,9 +1098,37 @@ function Brain.Run(userCfg)
     local theme2Src = type(theme2) == "table" and normalize(theme2.Id) or nil
     if theme2Src then entries[#entries + 1] = {src = theme2Src, kind = "audio"} end
 
-    -- scare event image + sound: only downloaded when the event is on
-    local scareImgSrc = cfg.ScareEvent and collect(cfg.ScareImage, "image") or {}
-    local scareSndSrc = cfg.ScareEvent and collect(cfg.ScareSound, "audio") or {}
+    -- scare event: the main scare (ScareImage / ScareSound ...) plus every entry in ScareVariants. a variant can override
+    -- any Scare setting (Image, Sound, Volume, SizeX, SizeY, StudsOffsetX/Y/Z, Brightness, Shake, RemoveBear,
+    -- RemoveAfterimage ...) and whatever it leaves out comes from the main scare. only downloaded when the event is on
+    local scareSpecs = {}
+    if cfg.ScareEvent then
+        local function addScare(over, weight, label)
+            local sp = {
+                label = label, weight = math.max(weight, 0),
+                Image = cfg.ScareImage, Sound = cfg.ScareSound, ImageFrameSpeed = 0.1,
+                Volume = cfg.ScareVolume, SizeX = cfg.ScareSizeX, SizeY = cfg.ScareSizeY,
+                StudsOffsetX = cfg.ScareStudsOffsetX, StudsOffsetY = cfg.ScareStudsOffsetY, StudsOffsetZ = cfg.ScareStudsOffsetZ,
+                Brightness = cfg.ScareBrightness, Shake = cfg.ScareShake,
+                ZoomFrom = 1, ZoomTime = 0.25, FadeOut = 0, Blink = 0,
+                RemoveBear = cfg.ScareRemoveBear, RemoveAfterimage = cfg.ScareRemoveAfterimage,
+            }
+            for k, v in pairs(over) do
+                if k ~= "Weight" and k ~= "Name" then sp[k] = v end
+            end
+            sp.imgSrc = collect(sp.Image, "image")
+            sp.sndSrc = collect(sp.Sound, "audio")
+            scareSpecs[#scareSpecs + 1] = sp
+        end
+        if cfg.ScareMainWeight > 0 then addScare({}, cfg.ScareMainWeight, "main") end
+        if type(cfg.ScareVariants) == "table" then
+            for i, v in ipairs(cfg.ScareVariants) do
+                if type(v) == "table" and v.Enabled ~= false then -- Enabled = false switches a variant off
+                    addScare(v, tonumber(v.Weight) or 1, tostring(v.Name or ("variant " .. i)))
+                end
+            end
+        end
+    end
 
     -- voice lines + stomp sounds: only downloaded when enabled
     local voiceCfg = type(cfg.VoiceLines) == "table" and cfg.VoiceLines or nil
@@ -1221,8 +1255,9 @@ function Brain.Run(userCfg)
         if #spec.idle == 0 and #spec.walk > 0 then spec.idle = {spec.walk[1]} end
         if #spec.walk == 0 then spec.walk = spec.idle end
     end
-    local scareImg = frames(scareImgSrc)[1]
-    local scareSnd = frames(scareSndSrc)[1]
+    for _, sp in ipairs(scareSpecs) do
+        sp.images, sp.sounds = frames(sp.imgSrc), frames(sp.sndSrc) -- (a gif turns into several image frames)
+    end
     for _, spec in ipairs(reactiveSpecs) do spec.assets = frames(spec.src) end
     info(cfg, ("loaded '%s': %d idle frame(s), %d walk frame(s)"):format(
         cfg.SkinName, #frames(idleSrc), #frames(walkSrc)))
@@ -2076,83 +2111,169 @@ function Brain.Run(userCfg)
         prevMoving, prevRunning = moving, running
     end
 
-    -- scare event (optional, TBB style): every ScareInterval seconds the scare image appears over your skin
-    -- (its own billboard, in front) and the scare sound plays. when the sound ends, the scare ends: the image
-    -- disappears and anything hidden for it (your skin / the afterimage) comes back
-    local scareGui, scareSound
+    -- scare event (optional, TBB style): every ScareInterval seconds ONE scare plays. a scare is an image shown over
+    -- your skin (its own billboard, in front) plus a sound, and it ends when the sound ends: the image disappears and
+    -- anything hidden for it (your skin / the afterimage) comes back. the main scare and every ScareVariants entry
+    -- are the pool, and one is picked each time (random without repeating, or in order)
+    local scares = {}
     local scareActive = false
+    local scareHideGhosts = false
     if cfg.ScareEvent then
-        if not scareImg then
-            warn(TAG .. "ScareEvent is on but ScareImage didn't load, so there will be no scare image")
-        else
-            scareGui = Instance.new("BillboardGui")
-            scareGui.Name = "SkinBrainScare"
-            scareGui.ResetOnSpawn = false
-            scareGui.ClipsDescendants = false
-            scareGui.AlwaysOnTop = cfg.AlwaysOnTop
-            scareGui.LightInfluence = cfg.LightInfluence
-            scareGui.Size = UDim2.new(tonumber(cfg.ScareSizeX) or cfg.sizeX, 0, tonumber(cfg.ScareSizeY) or cfg.sizeY, 0)
-            scareGui.StudsOffset = Vector3.new(cfg.ScareStudsOffsetX, cfg.ScareStudsOffsetY, cfg.ScareStudsOffsetZ)
-            pcall(function() scareGui.Brightness = cfg.ScareBrightness end)
-            scareGui.Enabled = false
-            scareGui.Parent = root
-            local simg = Instance.new("ImageLabel")
-            simg.Size = UDim2.new(1, 0, 1, 0)
-            simg.BackgroundTransparency = 1
-            simg.Image = scareImg
-            if cfg.PixelArt then simg.ResampleMode = Enum.ResamplerMode.Pixelated end
-            simg.Parent = scareGui
+        for _, sp in ipairs(scareSpecs) do
+            local sc = {spec = sp, sounds = {}}
+            if #sp.images > 0 then
+                local sx, sy = tonumber(sp.SizeX) or cfg.sizeX, tonumber(sp.SizeY) or cfg.sizeY
+                local g = Instance.new("BillboardGui")
+                g.Name = "SkinBrainScare"
+                g.ResetOnSpawn = false
+                g.ClipsDescendants = false
+                g.AlwaysOnTop = cfg.AlwaysOnTop
+                g.LightInfluence = cfg.LightInfluence
+                g.Size = UDim2.new(sx, 0, sy, 0)
+                sc.offset = Vector3.new(tonumber(sp.StudsOffsetX) or 0, tonumber(sp.StudsOffsetY) or 0, tonumber(sp.StudsOffsetZ) or 0)
+                g.StudsOffset = sc.offset
+                pcall(function() g.Brightness = math.max(tonumber(sp.Brightness) or 1, 0) end)
+                g.Enabled = false
+                g.Parent = root
+                local im = Instance.new("ImageLabel")
+                im.Size = UDim2.new(1, 0, 1, 0)
+                im.BackgroundTransparency = 1
+                im.Image = sp.images[1]
+                if cfg.PixelArt then im.ResampleMode = Enum.ResamplerMode.Pixelated end
+                im.Parent = g
+                sc.gui, sc.img, sc.sx, sc.sy = g, im, sx, sy
+            else
+                warn(("%sscare '%s' has no usable image, it will only play its sound"):format(TAG, sp.label))
+            end
+            for i, id in ipairs(sp.sounds) do
+                local sn = Instance.new("Sound")
+                sn.Name = "SkinBrainScareSound"
+                sn.SoundId = id
+                sn.Volume = math.clamp(tonumber(sp.Volume) or cfg.ScareVolume, 0, 10)
+                sn.Looped = false
+                sn.RollOffMaxDistance = 100000
+                sn.Parent = root
+                sounds[#sounds + 1] = sn
+                sc.sounds[i] = sn
+            end
+            if sc.gui or #sc.sounds > 0 then
+                scares[#scares + 1] = sc
+            else
+                warn(("%sscare '%s' has neither a usable image nor sound, skipping it"):format(TAG, sp.label))
+            end
         end
-        if scareSnd then
-            scareSound = Instance.new("Sound")
-            scareSound.Name = "SkinBrainScare"
-            scareSound.SoundId = scareSnd
-            scareSound.Volume = cfg.ScareVolume
-            scareSound.Looped = false
-            scareSound.RollOffMaxDistance = 100000
-            scareSound.Parent = root
-            sounds[#sounds + 1] = scareSound
+        if #scares == 0 then
+            warn(TAG .. "ScareEvent is on but there is no scare to play (check ScareImage / ScareSound / ScareVariants)")
         else
-            warn(TAG .. "ScareEvent is on but ScareSound didn't load, scares will last ScareFallbackTime seconds instead")
-        end
+            info(cfg, ("%d scare(s) ready: %s"):format(#scares, (function()
+                local names = {}
+                for _, sc in ipairs(scares) do names[#names + 1] = sc.spec.label end
+                return table.concat(names, ", ")
+            end)()))
 
-        if scareGui or scareSound then
             task.spawn(function()
+                local lastPick, orderIdx = nil, 0
                 local nextAt = os.clock() + cfg.ScareInterval
                 while alive do
                     while alive and os.clock() < nextAt do task.wait(0.25) end
                     if not alive then break end
 
+                    -- which scare: in order, or random by weight (never the same one twice in a row)
+                    local pick
+                    if cfg.ScarePick == "order" then
+                        orderIdx = orderIdx % #scares + 1
+                        pick = orderIdx
+                    else
+                        local total = 0
+                        for i, sc in ipairs(scares) do
+                            if not (#scares > 1 and i == lastPick) then total += sc.spec.weight end
+                        end
+                        local roll = math.random() * total
+                        for i, sc in ipairs(scares) do
+                            if not (#scares > 1 and i == lastPick) then
+                                pick = pick or i
+                                roll -= sc.spec.weight
+                                if roll <= 0 then pick = i break end
+                            end
+                        end
+                    end
+                    pick = pick or 1
+                    lastPick = pick
+                    local sc = scares[pick]
+                    local sp = sc.spec
+                    info(cfg, "scare: " .. sp.label)
+
                     -- scare starts
                     local startedAt = os.clock()
+                    local hideBear, hideGhosts = sp.RemoveBear == true, sp.RemoveAfterimage == true
                     scareActive = true
-                    if scareGui then scareGui.Enabled = true end
-                    if cfg.ScareRemoveBear then gui.Enabled = false end
-                    if cfg.ScareRemoveAfterimage then
+                    scareHideGhosts = hideGhosts
+                    if sc.gui then sc.gui.Enabled = true end
+                    if hideBear then gui.Enabled = false end
+                    if hideGhosts then
                         for _, em in pairs(emitters) do em:Clear() end
                     end
 
+                    local snd = (#sc.sounds > 0) and sc.sounds[math.random(#sc.sounds)] or nil
+                    local finished = false
+                    if snd then
+                        snd.TimePosition = 0
+                        snd.Ended:Once(function() finished = true end)
+                        snd:Play()
+                    end
+                    local shake = math.max(tonumber(sp.Shake) or 0, 0)
+                    local zoomFrom = tonumber(sp.ZoomFrom) or 1
+                    local zoomTime = math.max(tonumber(sp.ZoomTime) or 0.25, 0.01)
+                    local fadeOut = math.max(tonumber(sp.FadeOut) or 0, 0)
+                    local blink = math.max(tonumber(sp.Blink) or 0, 0)
+                    local frameSpeed = math.max(tonumber(sp.ImageFrameSpeed) or 0.1, 0.02)
+
                     -- ...and ends when the sound ends (with a safety limit so your skin can never get stuck hidden)
-                    if scareSound then
-                        local finished = false
-                        scareSound.TimePosition = 0
-                        scareSound.Ended:Once(function() finished = true end)
-                        scareSound:Play()
-                        while alive and not finished do
-                            local len = scareSound.TimeLength
-                            local limit = (len > 0) and (len / math.max(scareSound.PlaybackSpeed, 0.1) + 1.5) or 8
-                            if os.clock() - startedAt > limit then break end
-                            task.wait(0.05)
+                    while alive do
+                        local elapsed = os.clock() - startedAt
+                        local remaining
+                        if snd then
+                            if finished then break end
+                            local len = snd.TimeLength
+                            local limit = (len > 0) and (len / math.max(snd.PlaybackSpeed, 0.1) + 1.5) or 8
+                            if elapsed > limit then break end
+                            if len > 0 then remaining = len - snd.TimePosition end
+                        else
+                            if elapsed >= cfg.ScareFallbackTime then break end
+                            remaining = cfg.ScareFallbackTime - elapsed
                         end
-                    else
-                        task.wait(cfg.ScareFallbackTime)
+                        if sc.gui then
+                            if zoomFrom ~= 1 then -- grows from ZoomFrom x its size to full size
+                                local z = zoomFrom + (1 - zoomFrom) * math.clamp(elapsed / zoomTime, 0, 1)
+                                sc.gui.Size = UDim2.new(sc.sx * z, 0, sc.sy * z, 0)
+                            end
+                            if shake > 0 then
+                                sc.gui.StudsOffset = sc.offset + Vector3.new((math.random() * 2 - 1) * shake, (math.random() * 2 - 1) * shake, 0)
+                            end
+                            if #sp.images > 1 then
+                                sc.img.Image = sp.images[math.floor(elapsed / frameSpeed) % #sp.images + 1]
+                            end
+                            if blink > 0 then sc.img.Visible = math.floor(elapsed * blink * 2) % 2 == 0 end
+                            if fadeOut > 0 and remaining then
+                                sc.img.ImageTransparency = math.clamp(1 - remaining / fadeOut, 0, 1)
+                            end
+                        end
+                        task.wait()
                     end
 
                     -- scare over: image goes away, everything comes back
-                    if scareGui then scareGui.Enabled = false end
-                    if cfg.ScareRemoveBear then gui.Enabled = true end
+                    if sc.gui then
+                        sc.gui.Enabled = false
+                        sc.gui.StudsOffset = sc.offset
+                        sc.gui.Size = UDim2.new(sc.sx, 0, sc.sy, 0)
+                        sc.img.Visible = true
+                        sc.img.ImageTransparency = 0
+                        sc.img.Image = sp.images[1]
+                    end
+                    if hideBear then gui.Enabled = true end
                     scareActive = false
-                    nextAt = math.max(os.clock(), startedAt + cfg.ScareInterval)
+                    scareHideGhosts = false
+                    nextAt = math.max(os.clock(), startedAt + (tonumber(sp.Interval) or cfg.ScareInterval))
                 end
             end)
         end
@@ -2658,7 +2779,7 @@ function Brain.Run(userCfg)
         end
 
         -- afterimages
-        if cfg.AfterimageEffect and not (scareActive and cfg.ScareRemoveAfterimage) then
+        if cfg.AfterimageEffect and not scareHideGhosts then
             local rate = cfg.AfterimageRate
             if now - lastTrail >= rate then
                 lastTrail = now
@@ -2718,7 +2839,9 @@ function Brain.Run(userCfg)
         if trailHolder then trailHolder:Destroy() end
         if orbHolder then orbHolder:Destroy() end
         for _, e in ipairs(extras) do e.gui:Destroy() end
-        if scareGui then scareGui:Destroy() end
+        for _, sc in ipairs(scares) do
+            if sc.gui then sc.gui:Destroy() end
+        end
         wipeDownloads()
         if env.__SkinBrainCleanup == destroy then env.__SkinBrainCleanup = nil end
     end
