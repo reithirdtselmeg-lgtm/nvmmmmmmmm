@@ -1,4 +1,4 @@
--- SkinBrain v3.8
+-- SkinBrain v3.9
 -- the boring work: downloads/caching, frame logic, billboard, effects, cleanup.
 -- you never need to edit this. all settings live in SkinTemplate.lua.
 -- host it (github raw link) or put it in your executor's workspace as "SkinBrain.lua".
@@ -9,7 +9,7 @@ local ContentProvider = game:GetService("ContentProvider")
 
 local env = (getgenv and getgenv()) or _G
 local TAG = "[SkinBrain] "
-local Brain = {Version = "3.8"}
+local Brain = {Version = "3.9"}
 
 -- --- DEFAULTS ---
 local DEFAULTS = {
@@ -32,6 +32,8 @@ local DEFAULTS = {
     sizeX = 7,
     sizeY = 7,
     studsOffsetY = 0.25,
+    studsOffsetX = 0,              -- sideways offset of the skin (rarely needed)
+    studsOffsetZ = 0,              -- depth offset: positive = nearer the camera
     Tint = Color3.new(1, 1, 1),
     Transparency = 0,
     LightInfluence = 1,
@@ -147,6 +149,11 @@ local DEFAULTS = {
     ScarePick = "random",          -- random (never the same scare twice in a row) | order (cycles through them)
     ScareShake = 0,                -- studs the scare image shakes (each variant can set its own Shake)
 
+    -- phases: your skin changes phase every time the scare event happens (needs ScareEvent). see Phases in the template
+    PhaseSystem = false,
+    PhaseChangeAt = "start",       -- start = the phase changes the moment a scare begins | end = when it ends
+    PhaseBlendTime = 0,            -- seconds to smoothly blend size / offset / color into the new phase (0 = instant)
+
     -- downloads / logging
     ForceRedownload = false,
     DownloadTimeout = 20,
@@ -161,7 +168,7 @@ local DEFAULTS = {
 }
 -- settings that are allowed to be nil (so they aren't flagged as typos)
 local OPTIONAL = {WalkFrameSwitchSpeed = true, IdleFrameSwitchSpeed = true, ThemeSound = true, PointLightModifier = true,
-    VoiceLines = true, StompSound = true, OrbOrbit = true, ExtraBillboards = true, ThemeSound2 = true, ReactiveSounds = true, ScareVariants = true}
+    VoiceLines = true, StompSound = true, OrbOrbit = true, ExtraBillboards = true, ThemeSound2 = true, ReactiveSounds = true, ScareVariants = true, Phases = true, PhaseStart = true}
 
 -- scales a color's saturation/brightness (see ColorSaturation / ColorBrightness)
 local function fixColor(c, cfg)
@@ -213,6 +220,8 @@ local function buildConfig(user)
     cfg.ScareFallbackTime = math.max(cfg.ScareFallbackTime, 0.2)
     cfg.ScareMainWeight = math.max(cfg.ScareMainWeight, 0)
     cfg.ScareShake = math.max(cfg.ScareShake, 0)
+    cfg.PhaseBlendTime = math.max(cfg.PhaseBlendTime, 0)
+    cfg.PhaseChangeAt = (tostring(cfg.PhaseChangeAt):lower() == "end") and "end" or "start"
     cfg.ScarePick = (tostring(cfg.ScarePick):lower() == "order") and "order" or "random"
     cfg.WalkMagnitude = math.max(cfg.WalkMagnitude, 0)
     cfg.SliceCount = math.clamp(math.floor(cfg.SliceCount), 2, 200)
@@ -1014,6 +1023,22 @@ local REACTIVE_WHEN = {
     start = true, stop = true, jump = true, land = true, -- one-time events
 }
 
+-- settings a phase may change while the skin is running (anything that needs setup, like the slice strips or the
+-- afterimage emitters, can't change per phase)
+local PHASE_LIVE = {
+    "FrameMode", "FrameBounceStyle", "FrameJiggle", "FrameJiggleStrength", "FrameJiggleEase",
+    "FrameJump", "FrameJumpHighestHeight", "FrameSwayAmount",
+    "GlitchEffect", "GlitchStrength", "GlitchRate",
+    "WobbleEffect", "WobbleStrength", "WobbleSpeed", "WobbleWhenIdle",
+    "HoverBob", "HoverHeight", "HoverSpeed", "HoverOnlyWhenIdle",
+    "BreathEffect", "BreathStrength", "BreathSpeed",
+    "GhostPulse", "GhostPulseMin", "GhostPulseSpeed",
+    "FlickerEffect", "FlickerRate", "FlickerDuration", "FlickerDepth",
+    "BoilEffect", "BoilStrength", "BoilRate",
+    "RainbowKeyframeColor", "RainbowSpeed",
+}
+local BLEND_KEYS = {"sx", "sy", "ox", "oy", "oz", "transparency", "brightness"}
+
 local function mulColor(a, b)
     return Color3.new(a.R * b.R, a.G * b.G, a.B * b.B)
 end
@@ -1191,6 +1216,26 @@ function Brain.Run(userCfg)
         end
     end
 
+    -- phases: every phase is your main settings plus whatever that phase changes. its sprites are downloaded too.
+    -- without PhaseSystem there is just one phase: your main skin
+    local phaseSpecs = {}
+    if cfg.PhaseSystem and type(cfg.Phases) == "table" then
+        for i, p in ipairs(cfg.Phases) do
+            if type(p) == "table" and p.Enabled ~= false then
+                local sp = {}
+                for k, v in pairs(p) do sp[k] = v end
+                sp.name = tostring(p.Name or ("phase " .. i))
+                sp.idleSrc = (p.Idle ~= nil) and collect(p.Idle, "image") or idleSrc
+                sp.walkSrc = (p.Walk ~= nil) and collect(p.Walk, "image") or walkSrc
+                phaseSpecs[#phaseSpecs + 1] = sp
+            end
+        end
+        if #phaseSpecs == 0 then warn(TAG .. "PhaseSystem is on but Phases has no usable entries, using your main skin only") end
+    end
+    if #phaseSpecs == 0 then
+        phaseSpecs[1] = {name = "main", idleSrc = idleSrc, walkSrc = walkSrc}
+    end
+
     -- reactive sounds: only downloaded when enabled. every entry has a When trigger and one or more sounds
     local reactiveCfg = type(cfg.ReactiveSounds) == "table" and cfg.ReactiveSounds or nil
     local reactiveSpecs = {}
@@ -1243,9 +1288,43 @@ function Brain.Run(userCfg)
         end
         return out
     end
-    local idle, walk = frames(idleSrc), frames(walkSrc)
-    if #idle == 0 and #walk > 0 then idle = {walk[1]} end
-    if #walk == 0 then walk = idle end
+    local mainIdle, mainWalk = frames(idleSrc), frames(walkSrc)
+    if #mainIdle == 0 and #mainWalk > 0 then mainIdle = {mainWalk[1]} end
+    if #mainWalk == 0 then mainWalk = mainIdle end
+
+    local phases, spriteSets = {}, {}
+    for i, sp in ipairs(phaseSpecs) do
+        local ph = {name = sp.name, spec = sp}
+        ph.idle, ph.walk = frames(sp.idleSrc), frames(sp.walkSrc)
+        if #ph.idle == 0 and #ph.walk > 0 then ph.idle = {ph.walk[1]} end
+        if #ph.walk == 0 then ph.walk = ph.idle end
+        if #ph.idle == 0 then ph.idle, ph.walk = mainIdle, mainWalk end
+        -- what the billboard looks like in this phase (anything the phase doesn't set comes from your main settings)
+        ph.view = {
+            sx = tonumber(sp.sizeX) or cfg.sizeX, sy = tonumber(sp.sizeY) or cfg.sizeY,
+            ox = tonumber(sp.studsOffsetX) or cfg.studsOffsetX,
+            oy = tonumber(sp.studsOffsetY) or cfg.studsOffsetY,
+            oz = tonumber(sp.studsOffsetZ) or cfg.studsOffsetZ,
+            tint = (typeof(sp.Tint) == "Color3") and fixColor(sp.Tint, cfg) or cfg.Tint,
+            transparency = math.clamp(tonumber(sp.Transparency) or cfg.Transparency, 0, 1),
+            brightness = math.max(tonumber(sp.Brightness) or cfg.Brightness, 0),
+        }
+        phases[i] = ph
+        spriteSets[#spriteSets + 1] = ph.idle
+        spriteSets[#spriteSets + 1] = ph.walk
+    end
+    local phaseIndex = 1 -- which phase you start in (PhaseStart = its number or its Name)
+    if type(cfg.PhaseStart) == "number" then
+        phaseIndex = math.clamp(math.floor(cfg.PhaseStart), 1, #phases)
+    elseif cfg.PhaseStart ~= nil then
+        for i, ph in ipairs(phases) do
+            if ph.name:lower() == tostring(cfg.PhaseStart):lower() then phaseIndex = i end
+        end
+    end
+    local idle, walk = phases[phaseIndex].idle, phases[phaseIndex].walk
+    local view = {} -- the billboard's current look: phases change these live
+    for k, v in pairs(phases[phaseIndex].view) do view[k] = v end
+    local applyPhase -- (assigned further down) switches to another phase
     for _, spec in ipairs(orbSpecs) do
         spec.frames = spec.imageSrc and frames(spec.imageSrc) or {}
         spec.texture = spec.textureSrc and frames(spec.textureSrc)[1] or nil
@@ -1286,9 +1365,9 @@ function Brain.Run(userCfg)
     gui.ResetOnSpawn = false
     gui.AlwaysOnTop = cfg.AlwaysOnTop
     gui.LightInfluence = cfg.LightInfluence
-    gui.Size = UDim2.new(cfg.sizeX, 0, cfg.sizeY, 0)
-    gui.StudsOffset = Vector3.new(0, cfg.studsOffsetY, 0)
-    pcall(function() gui.Brightness = cfg.Brightness end)
+    gui.Size = UDim2.new(view.sx, 0, view.sy, 0)
+    gui.StudsOffset = Vector3.new(view.ox, view.oy, view.oz)
+    pcall(function() gui.Brightness = view.brightness end)
     gui.Parent = root
 
     -- holder frame: the shape effects (squash, wobble, hover...) move this, so the sprite and the
@@ -1306,8 +1385,8 @@ function Brain.Run(userCfg)
     sprite.Name = "Sprite"
     sprite.Size = UDim2.new(1, 0, 1, 0)
     sprite.BackgroundTransparency = 1
-    sprite.ImageColor3 = cfg.Tint
-    sprite.ImageTransparency = cfg.Transparency
+    sprite.ImageColor3 = view.tint
+    sprite.ImageTransparency = view.transparency
     if cfg.PixelArt then sprite.ResampleMode = Enum.ResamplerMode.Pixelated end
     sprite.ZIndex = 10
     sprite.Image = idle[1]
@@ -1371,7 +1450,7 @@ function Brain.Run(userCfg)
     if cfg.SliceGlitch then
         local N = cfg.SliceCount
         sliceMode = "rect"
-        for _, set in ipairs({idle, walk}) do
+        for _, set in ipairs(spriteSets) do
             for _, a in ipairs(set) do
                 if not ASSET_DIMS[a] then sliceMode = "clip" end
             end
@@ -1420,7 +1499,7 @@ function Brain.Run(userCfg)
     preloadFolder.Name = "Preload"
     preloadFolder.Parent = gui
     local labels, seen = {}, {}
-    for _, set in ipairs({idle, walk}) do
+    for _, set in ipairs(spriteSets) do
         for _, id in ipairs(set) do
             if not seen[id] then
                 seen[id] = true
@@ -1459,9 +1538,9 @@ function Brain.Run(userCfg)
     -- follow-frame mode: every ghost is emitted from ALL the frame emitters at once, and only the emitter of the
     -- billboard's current frame has a visible size. so the ghosts follow the animation without any emitter ever
     -- swapping its Texture (swapping a live emitter's texture is what made ghosts flicker)
-    local ghostSizeVisible, ghostSizeHidden, ghostFrameId
+    local ghostSizeVisible, ghostSizeHidden, ghostFrameId, setGhostShape
     local ghostsReady = not cfg.AfterimageEffect -- ghosts are held back until their textures are preloaded
-    local currentColor = cfg.Tint
+    local currentColor = view.tint
     local hoverOffset = 0
     local jumpOffset = 0 -- FrameJump's hop height, kept separate from hover so they just add together
 
@@ -1486,26 +1565,33 @@ function Brain.Run(userCfg)
 
         -- particles are square; Squash stretches them to your sprite's proportions
         -- (exact for square sprites like 8x8, best-effort for tall/wide ones)
-        local aspect = cfg.sizeY / math.max(cfg.sizeX, 0.01)
-        local squash = (aspect - 1) / (aspect + 1)
-        local baseSize = cfg.sizeX / math.max(1 - squash, 0.013) * cfg.AfterimageSizeScale
-        local endSize = baseSize * (1 + cfg.AfterimageGrow) -- default: same size the whole time, it only fades
+        local spin = cfg.AfterimageDistort and cfg.AfterimageDistortRotation or 0
 
+        -- ghost size + squash for a billboard of size sx x sy (it's recalculated when a phase changes the size).
         -- AfterimageDistort: every ghost gets its own random squash/stretch and size. the size runs from exactly
         -- the billboard's size up to (1 + amount) times bigger, so ghosts poke out a bit beyond it, and the
         -- squash makes each one wider and shorter, or taller and thinner. AfterimageDistortAmount = how much
-        local d = cfg.AfterimageDistort and cfg.AfterimageDistortAmount or 0
-        local sizeStart = baseSize * (1 + d / 2)
-        local sizeFinish = endSize * (1 + d / 2)
-        local envStart = baseSize * d / 2
-        local envFinish = endSize * d / 2
-        local squashEnv = math.min(d, math.max(0, 0.95 - math.abs(squash)))
-        local spin = cfg.AfterimageDistort and cfg.AfterimageDistortRotation or 0
-
-        ghostSizeVisible = NumberSequence.new({
-            NumberSequenceKeypoint.new(0, sizeStart, envStart),
-            NumberSequenceKeypoint.new(1, sizeFinish, envFinish),
-        })
+        local function ghostShape(sx, sy)
+            local aspect = sy / math.max(sx, 0.01)
+            local squash = (aspect - 1) / (aspect + 1)
+            local baseSize = sx / math.max(1 - squash, 0.013) * cfg.AfterimageSizeScale
+            local endSize = baseSize * (1 + cfg.AfterimageGrow) -- default: same size the whole time, it only fades
+            local d = cfg.AfterimageDistort and cfg.AfterimageDistortAmount or 0
+            local sizeStart = baseSize * (1 + d / 2)
+            local sizeFinish = endSize * (1 + d / 2)
+            local envStart = baseSize * d / 2
+            local envFinish = endSize * d / 2
+            local squashEnv = math.min(d, math.max(0, 0.95 - math.abs(squash)))
+            return NumberSequence.new({
+                NumberSequenceKeypoint.new(0, sizeStart, envStart),
+                NumberSequenceKeypoint.new(1, sizeFinish, envFinish),
+            }), NumberSequence.new({
+                NumberSequenceKeypoint.new(0, squash, squashEnv),
+                NumberSequenceKeypoint.new(1, squash, squashEnv),
+            })
+        end
+        local ghostSquash
+        ghostSizeVisible, ghostSquash = ghostShape(view.sx, view.sy)
         ghostSizeHidden = NumberSequence.new(0)
 
         local function makeGhostEmitter(texture)
@@ -1529,16 +1615,13 @@ function Brain.Run(userCfg)
             em.Color = ColorSequence.new(currentColor)
             em.Transparency = NumberSequence.new(cfg.AfterimageTransparency, 1)
             em.Size = ghostSizeVisible
-            em.Squash = NumberSequence.new({
-                NumberSequenceKeypoint.new(0, squash, squashEnv),
-                NumberSequenceKeypoint.new(1, squash, squashEnv),
-            })
+            em.Squash = ghostSquash
             em.Parent = attach
             return em
         end
 
         -- one emitter per frame, each with its texture set once and never changed
-        for _, set in ipairs({idle, walk}) do
+        for _, set in ipairs(spriteSets) do
             for _, id in ipairs(set) do
                 if not emitters[id] then emitters[id] = makeGhostEmitter(id) end
             end
@@ -1551,12 +1634,21 @@ function Brain.Run(userCfg)
             end
         end
 
+        setGhostShape = function(sx, sy)
+            local sizeSeq, squashSeq = ghostShape(sx, sy)
+            ghostSizeVisible = sizeSeq
+            for id, em in pairs(emitters) do
+                em.Squash = squashSeq
+                if not (cfg.AfterimageFollowFrame and id ~= ghostFrameId) then em.Size = sizeSeq end
+            end
+        end
+
         -- preload + warm up. a texture an emitter hasn't drawn yet shows up a moment late, which looks like ghosts
         -- flickering or vanishing for a frame (worst with AfterimageFollowFrame, which keeps swapping the emitter's
         -- Texture). so: preload every texture, make each one draw once (tiny and almost invisible), and hold the
         -- real ghosts back until that's done
         local warm, seenTex, toPreload = {}, {}, {}
-        for _, set in ipairs({idle, walk}) do
+        for _, set in ipairs(spriteSets) do
             for _, id in ipairs(set) do
                 if not seenTex[id] then
                     seenTex[id] = true
@@ -1609,7 +1701,7 @@ function Brain.Run(userCfg)
         -- same camera-relative offset is used here (TBB turns an attachment to face the camera every
         -- frame for this). ghosts sit behind the sprite through the emitter's ZOffset (render depth)
         local cam = workspace.CurrentCamera
-        local up = Vector3.new(0, cfg.studsOffsetY + hoverOffset, 0)
+        local up = Vector3.new(view.ox, view.oy + hoverOffset, view.oz)
         local hop = Vector3.new(0, jumpOffset, 0) -- the hop is a world-space offset, like in the game
         trailPart.CFrame = CFrame.new(root.Position + (cam and cam.CFrame:VectorToWorldSpace(up) or up) + hop)
 
@@ -2178,23 +2270,44 @@ function Brain.Run(userCfg)
                     while alive and os.clock() < nextAt do task.wait(0.25) end
                     if not alive then break end
 
+                    -- the phase this scare switches you into. a scare can be tied to a phase with Phase = "Name":
+                    -- it then only plays when that phase is the one about to start
+                    local nextPhase = (#phases > 1) and (phaseIndex % #phases + 1) or nil
+                    local function eligible(sc)
+                        local want = sc.spec.Phase
+                        if want == nil or not nextPhase then return true end
+                        return tostring(want):lower() == phases[nextPhase].name:lower()
+                    end
+                    local anyEligible = false
+                    for _, sc in ipairs(scares) do
+                        if eligible(sc) then anyEligible = true break end
+                    end
+                    local function ok(i) return (not anyEligible) or eligible(scares[i]) end
+
                     -- which scare: in order, or random by weight (never the same one twice in a row)
                     local pick
                     if cfg.ScarePick == "order" then
-                        orderIdx = orderIdx % #scares + 1
-                        pick = orderIdx
+                        for _ = 1, #scares do
+                            orderIdx = orderIdx % #scares + 1
+                            if ok(orderIdx) then pick = orderIdx break end
+                        end
                     else
                         local total = 0
                         for i, sc in ipairs(scares) do
-                            if not (#scares > 1 and i == lastPick) then total += sc.spec.weight end
+                            if ok(i) and not (#scares > 1 and i == lastPick) then total += sc.spec.weight end
                         end
                         local roll = math.random() * total
                         for i, sc in ipairs(scares) do
-                            if not (#scares > 1 and i == lastPick) then
+                            if ok(i) and not (#scares > 1 and i == lastPick) then
                                 pick = pick or i
                                 roll -= sc.spec.weight
                                 if roll <= 0 then pick = i break end
                             end
+                        end
+                    end
+                    if not pick then
+                        for i in ipairs(scares) do
+                            if ok(i) then pick = i break end
                         end
                     end
                     pick = pick or 1
@@ -2213,6 +2326,8 @@ function Brain.Run(userCfg)
                     if hideGhosts then
                         for _, em in pairs(emitters) do em:Clear() end
                     end
+                    -- phase change at the start of the scare (your skin may be hidden right now, so it changes unseen)
+                    if nextPhase and cfg.PhaseChangeAt == "start" then applyPhase(nextPhase) end
 
                     local snd = (#sc.sounds > 0) and sc.sounds[math.random(#sc.sounds)] or nil
                     local finished = false
@@ -2270,6 +2385,7 @@ function Brain.Run(userCfg)
                         sc.img.ImageTransparency = 0
                         sc.img.Image = sp.images[1]
                     end
+                    if nextPhase and cfg.PhaseChangeAt == "end" then applyPhase(nextPhase) end
                     if hideBear then gui.Enabled = true end
                     scareActive = false
                     scareHideGhosts = false
@@ -2360,10 +2476,7 @@ function Brain.Run(userCfg)
     end
 
     -- main loop
-    local walkSpeed = cfg.WalkFrameSwitchSpeed or cfg.StepDelay
-    local idleSpeed = cfg.IdleFrameSwitchSpeed or cfg.StepDelay
-    local walkClock = makeClock(#walk, cfg.WalkFrameCycle, walkSpeed, cfg.WalkFrameDelays)
-    local idleClock = makeClock(#idle, cfg.IdleFrameCycle, idleSpeed, cfg.IdleFrameDelays)
+    local walkClock, idleClock -- built for the current phase by applyPhase
     local walkTime, idleTime = 0, 0
     local activeTexture = idle[1]
     local squashY = 1
@@ -2482,8 +2595,113 @@ function Brain.Run(userCfg)
     local stripImage
     local sliceNextRoll = 0
 
+    -- ===== phases =====
+    -- a phase = your main settings + what that phase changes. applyPhase switches the sprites, timing, live effect
+    -- settings and the billboard's size / offset / tint / brightness (blended over PhaseBlendTime if you set one)
+    local baseLive = {}
+    for _, k in ipairs(PHASE_LIVE) do baseLive[k] = cfg[k] end
+    local blend
+
+    -- puts the current view (size, offset, tint...) onto the billboard
+    local function pushView()
+        gui.Size = UDim2.new(view.sx, 0, view.sy, 0)
+        if not transformActive then gui.StudsOffset = Vector3.new(view.ox, view.oy, view.oz) end
+        pcall(function() gui.Brightness = view.brightness end)
+        if not cfg.RainbowKeyframeColor then
+            currentColor = view.tint
+            sprite.ImageColor3 = view.tint
+            local seq = ColorSequence.new(view.tint)
+            for _, em in pairs(emitters) do em.Color = seq end
+        end
+        if not alphaActive then sprite.ImageTransparency = view.transparency end
+        lastAlpha = -1
+    end
+
+    applyPhase = function(i, instant)
+        local ph = phases[i]
+        local sp = ph.spec
+        phaseIndex = i
+
+        -- sprites + timing (a phase's StepDelay sets both speeds unless it sets idle/walk speeds itself)
+        idle, walk = ph.idle, ph.walk
+        local function speedFor(key)
+            return tonumber(sp[key]) or tonumber(sp.StepDelay) or cfg[key] or cfg.StepDelay
+        end
+        local function opt(key)
+            if sp[key] ~= nil then return sp[key] end
+            return cfg[key]
+        end
+        walkClock = makeClock(#walk, opt("WalkFrameCycle") == true, math.max(speedFor("WalkFrameSwitchSpeed"), 0.01), opt("WalkFrameDelays"))
+        idleClock = makeClock(#idle, opt("IdleFrameCycle") == true, math.max(speedFor("IdleFrameSwitchSpeed"), 0.01), opt("IdleFrameDelays"))
+
+        -- live effect settings: whatever the phase sets, everything else goes back to your main settings
+        for _, k in ipairs(PHASE_LIVE) do
+            local v = sp[k]
+            if v ~= nil and typeof(v) ~= typeof(baseLive[k]) then
+                warn(("%sphase '%s': %s should be a %s, ignoring it"):format(TAG, ph.name, k, typeof(baseLive[k])))
+                v = nil
+            end
+            if v == nil then v = baseLive[k] end
+            cfg[k] = v
+        end
+        local fm = tostring(cfg.FrameMode):lower()
+        if fm ~= "auto" and fm ~= "idle" and fm ~= "walk" and fm ~= "reverse" then fm = "auto" end
+        cfg.FrameMode = fm
+        cfg.FrameBounceStyle = (tostring(cfg.FrameBounceStyle):lower() == "alternate") and "alternate" or "step"
+        transformActive = cfg.FrameJiggle or cfg.GlitchEffect or cfg.WobbleEffect or cfg.HoverBob
+            or cfg.BreathEffect or cfg.BoilEffect or cfg.FrameJump or cfg.FrameSwayAmount ~= 0
+        alphaActive = cfg.GhostPulse or cfg.FlickerEffect
+
+        -- an effect that just switched off must not leave the skin stuck in its last pose
+        if not cfg.FrameJump then
+            jumpOffset = 0
+            bounce.y = 0
+            gui.StudsOffsetWorldSpace = Vector3.new(0, 0, 0)
+        end
+        if cfg.FrameSwayAmount == 0 then bounce.r = 0 end
+        if not transformActive then
+            squashY, hoverOffset = 1, 0
+            glitch.x, glitch.y, glitch.z, glitch.rot, glitch.scale = 0, 0, 0, 0, 1
+            boil.rot, boil.x, boil.y = 0, 0, 0
+            amp.wobble, amp.hover, amp.breath = 0, 0, 0
+            holder.Rotation = 0
+            holder.Size = UDim2.new(1, 0, 1, 0)
+            holder.Position = UDim2.new(0.5, 0, 1, 0)
+        end
+        if not alphaActive then
+            for n = 1, #layers do layers[n].gui.ImageTransparency = layers[n].base end
+        end
+
+        -- size / offset / tint / brightness
+        local to = ph.view
+        if instant or cfg.PhaseBlendTime <= 0 then
+            for k, v in pairs(to) do view[k] = v end
+            blend = nil
+            pushView()
+        else
+            local from = {}
+            for k, v in pairs(view) do from[k] = v end
+            blend = {t0 = os.clock(), from = from, to = to}
+        end
+        if setGhostShape then setGhostShape(to.sx, to.sy) end -- ghosts are sized for the new billboard
+        if not instant then info(cfg, "phase: " .. ph.name) end
+    end
+    applyPhase(phaseIndex, true)
+
     local function step(dt)
         local now = os.clock()
+
+        -- blending into a new phase (PhaseBlendTime)
+        if blend then
+            local t = math.clamp((now - blend.t0) / cfg.PhaseBlendTime, 0, 1)
+            local e = t * t * (3 - 2 * t)
+            for _, k in ipairs(BLEND_KEYS) do
+                view[k] = blend.from[k] + (blend.to[k] - blend.from[k]) * e
+            end
+            view.tint = blend.from.tint:Lerp(blend.to.tint, e)
+            pushView()
+            if t >= 1 then blend = nil end
+        end
 
         -- walking or not: like the real skin system (Humanoid.Running speed above WalkMagnitude),
         -- or plain move input when MoveDetection = "input"
@@ -2564,7 +2782,7 @@ function Brain.Run(userCfg)
         -- rainbow (multiplied by Tint)
         if cfg.RainbowKeyframeColor then
             local hue = (now / math.max(cfg.RainbowSpeed, 0.05)) % 1
-            currentColor = mulColor(fixColor(Color3.fromHSV(hue, 1, 1), cfg), cfg.Tint)
+            currentColor = mulColor(fixColor(Color3.fromHSV(hue, 1, 1), cfg), view.tint)
             sprite.ImageColor3 = currentColor
         end
 
@@ -2654,7 +2872,7 @@ function Brain.Run(userCfg)
             holder.Rotation = rot
             holder.Size = UDim2.new(glitch.scale, 0, glitch.scale * scaleY, 0)
             holder.Position = UDim2.new(0.5 + boil.x, 0, 1 + boil.y, 0)
-            gui.StudsOffset = Vector3.new(glitch.x, cfg.studsOffsetY + glitch.y + hoverOffset, glitch.z)
+            gui.StudsOffset = Vector3.new(view.ox + glitch.x, view.oy + glitch.y + hoverOffset, view.oz + glitch.z)
         end
 
         -- visibility effects: ghost pulse / flicker combine into one transparency
@@ -2674,7 +2892,7 @@ function Brain.Run(userCfg)
                 end
             end
             visNow = vis
-            local tr = 1 - (1 - cfg.Transparency) * vis
+            local tr = 1 - (1 - view.transparency) * vis
             if math.abs(tr - lastAlpha) > 0.002 then
                 lastAlpha = tr
                 sprite.ImageTransparency = tr
