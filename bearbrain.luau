@@ -1,4 +1,4 @@
--- SkinBrain v3.9
+-- SkinBrain v3.11
 -- the boring work: downloads/caching, frame logic, billboard, effects, cleanup.
 -- you never need to edit this. all settings live in SkinTemplate.lua.
 -- host it (github raw link) or put it in your executor's workspace as "SkinBrain.lua".
@@ -9,7 +9,7 @@ local ContentProvider = game:GetService("ContentProvider")
 
 local env = (getgenv and getgenv()) or _G
 local TAG = "[SkinBrain] "
-local Brain = {Version = "3.9"}
+local Brain = {Version = "3.11"}
 
 -- --- DEFAULTS ---
 local DEFAULTS = {
@@ -153,6 +153,7 @@ local DEFAULTS = {
     PhaseSystem = false,
     PhaseChangeAt = "start",       -- start = the phase changes the moment a scare begins | end = when it ends
     PhaseBlendTime = 0,            -- seconds to smoothly blend size / offset / color into the new phase (0 = instant)
+    PhaseAudioFade = 0.5,          -- seconds the theme music crossfades when the phase changes
 
     -- downloads / logging
     ForceRedownload = false,
@@ -221,6 +222,7 @@ local function buildConfig(user)
     cfg.ScareMainWeight = math.max(cfg.ScareMainWeight, 0)
     cfg.ScareShake = math.max(cfg.ScareShake, 0)
     cfg.PhaseBlendTime = math.max(cfg.PhaseBlendTime, 0)
+    cfg.PhaseAudioFade = math.max(cfg.PhaseAudioFade, 0)
     cfg.PhaseChangeAt = (tostring(cfg.PhaseChangeAt):lower() == "end") and "end" or "start"
     cfg.ScarePick = (tostring(cfg.ScarePick):lower() == "order") and "order" or "random"
     cfg.WalkMagnitude = math.max(cfg.WalkMagnitude, 0)
@@ -1114,15 +1116,6 @@ function Brain.Run(userCfg)
     end
     local idleSrc = collect(cfg.Idle, "image")
     local walkSrc = collect(cfg.Walk, "image")
-    local theme = cfg.ThemeSound
-    local themeSrc = type(theme) == "table" and normalize(theme.Id) or nil
-    if themeSrc then entries[#entries + 1] = {src = themeSrc, kind = "audio"} end
-
-    -- optional second theme track (plays together with the first, also looping)
-    local theme2 = cfg.ThemeSound2
-    local theme2Src = type(theme2) == "table" and normalize(theme2.Id) or nil
-    if theme2Src then entries[#entries + 1] = {src = theme2Src, kind = "audio"} end
-
     -- scare event: the main scare (ScareImage / ScareSound ...) plus every entry in ScareVariants. a variant can override
     -- any Scare setting (Image, Sound, Volume, SizeX, SizeY, StudsOffsetX/Y/Z, Brightness, Shake, RemoveBear,
     -- RemoveAfterimage ...) and whatever it leaves out comes from the main scare. only downloaded when the event is on
@@ -1154,12 +1147,6 @@ function Brain.Run(userCfg)
             end
         end
     end
-
-    -- voice lines + stomp sounds: only downloaded when enabled
-    local voiceCfg = type(cfg.VoiceLines) == "table" and cfg.VoiceLines or nil
-    local stompCfg = type(cfg.StompSound) == "table" and cfg.StompSound or nil
-    local voiceSrc = (voiceCfg and voiceCfg.Enabled) and collect(voiceCfg.Sounds, "audio") or {}
-    local stompSrc = (stompCfg and stompCfg.Enabled) and collect(stompCfg.Sounds, "audio") or {}
 
     -- orbs: one spec per orb. settings come from OrbOrbit, and each entry in Orbs can override any of them
     local orbCfg = type(cfg.OrbOrbit) == "table" and cfg.OrbOrbit or nil
@@ -1236,22 +1223,66 @@ function Brain.Run(userCfg)
         phaseSpecs[1] = {name = "main", idleSrc = idleSrc, walkSrc = walkSrc}
     end
 
-    -- reactive sounds: only downloaded when enabled. every entry has a When trigger and one or more sounds
-    local reactiveCfg = type(cfg.ReactiveSounds) == "table" and cfg.ReactiveSounds or nil
-    local reactiveSpecs = {}
-    if reactiveCfg and reactiveCfg.Enabled and type(reactiveCfg.Sounds) == "table" then
-        for i, e in ipairs(reactiveCfg.Sounds) do
-            local when = type(e) == "table" and tostring(e.When or ""):lower() or ""
-            if REACTIVE_WHEN[when] then
-                local spec = {}
-                for k, v in pairs(e) do spec[k] = v end
-                spec.when, spec.index = when, i
-                spec.src = collect(e.Sound, "audio")
-                reactiveSpecs[#reactiveSpecs + 1] = spec
-            else
-                warn(TAG .. "ReactiveSounds entry " .. i .. " needs When = walk, run, idle, move, start, stop, jump or land, skipping it")
-            end
+    -- phase audio: ThemeSound, ThemeSound2, VoiceLines, StompSound and ReactiveSounds can each be changed per phase.
+    -- a phase that doesn't set one uses the main one (the very same table, so it simply keeps playing through the
+    -- change). a phase can set only the settings it wants to change, or turn one off (ThemeSound = {Id = ""},
+    -- VoiceLines = {Enabled = false}). only the sounds of enabled things are downloaded
+    local function mergeCfg(base, over)
+        if type(over) ~= "table" or over == base then return base end -- (a phase that points at the main table just shares it)
+        local m = {}
+        if type(base) == "table" then
+            for k, v in pairs(base) do m[k] = v end
         end
+        for k, v in pairs(over) do m[k] = v end
+        return m
+    end
+    local themeRecs, voiceRecs, stompRecs, reactiveRecs = {}, {}, {}, {}
+    local function themeRec(tc)
+        if type(tc) ~= "table" then return nil end
+        if not themeRecs[tc] then
+            local src = normalize(tc.Id)
+            themeRecs[tc] = {cfg = tc, src = src}
+            if src then entries[#entries + 1] = {src = src, kind = "audio"} end
+        end
+        return themeRecs[tc]
+    end
+    local function voiceRec(vc)
+        if type(vc) ~= "table" or not vc.Enabled then return nil end
+        if not voiceRecs[vc] then voiceRecs[vc] = {cfg = vc, src = collect(vc.Sounds, "audio")} end
+        return voiceRecs[vc]
+    end
+    local function stompRec(sc)
+        if type(sc) ~= "table" or not sc.Enabled then return nil end
+        if not stompRecs[sc] then stompRecs[sc] = {cfg = sc, src = collect(sc.Sounds, "audio")} end
+        return stompRecs[sc]
+    end
+    -- reactive sounds: every entry has a When trigger and one or more sounds
+    local function reactiveRec(rc)
+        if type(rc) ~= "table" or not rc.Enabled or type(rc.Sounds) ~= "table" then return nil end
+        if not reactiveRecs[rc] then
+            local specs = {}
+            for i, e in ipairs(rc.Sounds) do
+                local when = type(e) == "table" and tostring(e.When or ""):lower() or ""
+                if REACTIVE_WHEN[when] then
+                    local spec = {}
+                    for k, v in pairs(e) do spec[k] = v end
+                    spec.when, spec.index = when, i
+                    spec.src = collect(e.Sound, "audio")
+                    specs[#specs + 1] = spec
+                else
+                    warn(TAG .. "ReactiveSounds entry " .. i .. " needs When = walk, run, idle, move, start, stop, jump or land, skipping it")
+                end
+            end
+            reactiveRecs[rc] = {cfg = rc, specs = specs}
+        end
+        return reactiveRecs[rc]
+    end
+    for _, sp in ipairs(phaseSpecs) do
+        sp.themeRec = themeRec(mergeCfg(cfg.ThemeSound, sp.ThemeSound))
+        sp.theme2Rec = themeRec(mergeCfg(cfg.ThemeSound2, sp.ThemeSound2))
+        sp.voiceRec = voiceRec(mergeCfg(cfg.VoiceLines, sp.VoiceLines))
+        sp.stompRec = stompRec(mergeCfg(cfg.StompSound, sp.StompSound))
+        sp.reactiveRec = reactiveRec(mergeCfg(cfg.ReactiveSounds, sp.ReactiveSounds))
     end
 
     -- extra billboards: independent billboards on you, each with its own frames, size, offset and mode
@@ -1294,7 +1325,8 @@ function Brain.Run(userCfg)
 
     local phases, spriteSets = {}, {}
     for i, sp in ipairs(phaseSpecs) do
-        local ph = {name = sp.name, spec = sp}
+        local ph = {name = sp.name, spec = sp, themeRec = sp.themeRec, theme2Rec = sp.theme2Rec,
+            voiceRec = sp.voiceRec, stompRec = sp.stompRec, reactiveRec = sp.reactiveRec}
         ph.idle, ph.walk = frames(sp.idleSrc), frames(sp.walkSrc)
         if #ph.idle == 0 and #ph.walk > 0 then ph.idle = {ph.walk[1]} end
         if #ph.walk == 0 then ph.walk = ph.idle end
@@ -1337,7 +1369,11 @@ function Brain.Run(userCfg)
     for _, sp in ipairs(scareSpecs) do
         sp.images, sp.sounds = frames(sp.imgSrc), frames(sp.sndSrc) -- (a gif turns into several image frames)
     end
-    for _, spec in ipairs(reactiveSpecs) do spec.assets = frames(spec.src) end
+    for _, rec in pairs(voiceRecs) do rec.assets = frames(rec.src) end
+    for _, rec in pairs(stompRecs) do rec.assets = frames(rec.src) end
+    for _, rec in pairs(reactiveRecs) do
+        for _, spec in ipairs(rec.specs) do spec.assets = frames(spec.src) end
+    end
     info(cfg, ("loaded '%s': %d idle frame(s), %d walk frame(s)"):format(
         cfg.SkinName, #frames(idleSrc), #frames(walkSrc)))
     if #idle == 0 then
@@ -1745,110 +1781,157 @@ function Brain.Run(userCfg)
         humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
     end
 
-    -- theme sounds (optional): up to two looping tracks that play together
-    local function startTheme(tcfg, src, name)
-        if not (src and resolved[src]) then return end
-        local s = Instance.new("Sound")
-        s.Name = name
-        s.SoundId = resolved[src][1]
-        s.Volume = tcfg.Volume or 1
-        s.Looped = true -- always loops until you reset/respawn
-        s.PlaybackSpeed = tcfg.PlaybackSpeed or 1
-        if tcfg.RollOffMaxDistance then s.RollOffMaxDistance = tcfg.RollOffMaxDistance end
-        s.Parent = root
-        sounds[#sounds + 1] = s
-        s:Play()
-
-        -- watchdog: if anything stops/pauses it, start it again
-        task.spawn(function()
-            while alive and s.Parent do
-                s.Looped = true
-                if not s.Playing then s:Play() end
-                task.wait(1)
-            end
-        end)
+    -- theme sounds: ThemeSound and ThemeSound2 (and their per-phase versions). every distinct track gets one looping
+    -- Sound. the tracks of the CURRENT phase fade in and all the others fade out, so a phase change crossfades the
+    -- music (PhaseAudioFade seconds). a track that two phases share just keeps playing
+    local themeList = {}
+    for _, rec in pairs(themeRecs) do
+        if rec.src and resolved[rec.src] then
+            local tc = rec.cfg
+            local snd = Instance.new("Sound")
+            snd.Name = "SkinBrainTheme"
+            snd.SoundId = resolved[rec.src][1]
+            snd.Volume = 0
+            snd.Looped = true -- always loops until you reset/respawn
+            snd.PlaybackSpeed = tc.PlaybackSpeed or 1
+            if tc.RollOffMaxDistance then snd.RollOffMaxDistance = tc.RollOffMaxDistance end
+            snd.Parent = root
+            sounds[#sounds + 1] = snd
+            rec.sound, rec.volume, rec.vol, rec.active, rec.nextCheck = snd, math.max(tonumber(tc.Volume) or 1, 0), 0, false, 0
+            themeList[#themeList + 1] = rec
+        end
     end
-    startTheme(theme, themeSrc, "SkinBrainTheme")
-    startTheme(theme2, theme2Src, "SkinBrainTheme2")
 
-    -- voice lines (optional): one random line every MinDelay..MaxDelay seconds.
-    -- lines never overlap (it waits for the current one to finish) and never loop
-    local voiceAssets = frames(voiceSrc)
-    if voiceCfg and voiceCfg.Enabled and #voiceAssets > 0 then
-        local voiceSounds = {}
-        for i, id in ipairs(voiceAssets) do
+    local function updateThemes(dt, now)
+        local fade = math.max(cfg.PhaseAudioFade, 0.01)
+        for i = 1, #themeList do
+            local rec = themeList[i]
+            local snd = rec.sound
+            local target = rec.active and rec.volume or 0
+            local stepV = math.max(rec.volume, 0.01) * dt / fade
+            if rec.vol < target then
+                rec.vol = math.min(target, rec.vol + stepV)
+            elseif rec.vol > target then
+                rec.vol = math.max(target, rec.vol - stepV)
+            end
+            snd.Volume = rec.vol
+            if rec.active or rec.vol > 0.001 then
+                -- watchdog: if anything stops/pauses it, start it again
+                if now >= rec.nextCheck then
+                    rec.nextCheck = now + 1
+                    snd.Looped = true
+                    if not snd.Playing then snd:Play() end
+                end
+            elseif snd.Playing then
+                snd:Stop()
+            end
+        end
+    end
+
+    -- voice lines: one random line every MinDelay..MaxDelay seconds, from the CURRENT phase's VoiceLines.
+    -- lines never overlap (it waits for the current one to finish) and never loop. a phase change cuts the line
+    -- that is playing and starts that phase's own timer
+    local currentVoice, voicePlaying
+    local anyVoice = false
+    for _, rec in pairs(voiceRecs) do
+        rec.sounds = {}
+        local vc = rec.cfg
+        for i, id in ipairs(rec.assets) do
             local vs = Instance.new("Sound")
             vs.Name = "SkinBrainVoice" .. i
             vs.SoundId = id
-            vs.Volume = voiceCfg.Volume or 1
+            vs.Volume = vc.Volume or 1
             vs.Looped = false
-            if voiceCfg.RollOffMaxDistance then vs.RollOffMaxDistance = voiceCfg.RollOffMaxDistance end
+            if vc.RollOffMaxDistance then vs.RollOffMaxDistance = vc.RollOffMaxDistance end
             vs.Parent = root
             sounds[#sounds + 1] = vs
-            voiceSounds[i] = vs
+            rec.sounds[i] = vs
         end
-
+        if #rec.sounds > 0 then anyVoice = true end
+    end
+    if anyVoice then
         task.spawn(function()
-            local minD = math.max(voiceCfg.MinDelay or 23, 0)
-            local maxD = math.max(voiceCfg.MaxDelay or 34, minD)
-            local lastPick
-            local nextAt = os.clock() + minD + math.random() * (maxD - minD)
+            local lastPick, scheduledFor, nextAt
             while alive do
-                while alive and os.clock() < nextAt do task.wait(0.25) end
-                if not alive then break end
+                local rec = currentVoice
+                if rec and #rec.sounds == 0 then rec = nil end
+                if rec ~= scheduledFor then -- a phase with a different voice set started: restart the timer
+                    scheduledFor = rec
+                    lastPick = nil
+                    if rec then
+                        local minD = math.max(rec.cfg.MinDelay or 23, 0)
+                        local maxD = math.max(rec.cfg.MaxDelay or 34, minD)
+                        nextAt = os.clock() + minD + math.random() * (maxD - minD)
+                    end
+                end
+                if rec and os.clock() >= nextAt then
+                    local minD = math.max(rec.cfg.MinDelay or 23, 0)
+                    local maxD = math.max(rec.cfg.MaxDelay or 34, minD)
 
-                -- random line, but not the same one twice in a row
-                local pick = math.random(#voiceSounds)
-                if #voiceSounds > 1 and pick == lastPick then pick = pick % #voiceSounds + 1 end
-                lastPick = pick
+                    -- random line, but not the same one twice in a row
+                    local n = #rec.sounds
+                    local pick = math.random(n)
+                    if n > 1 and pick == lastPick then pick = pick % n + 1 end
+                    lastPick = pick
 
-                local vs = voiceSounds[pick]
-                local startedAt = os.clock()
-                local finished = false
-                vs.TimePosition = 0
-                vs.Ended:Once(function() finished = true end)
-                vs:Play()
-                -- wait for it to end (with a timeout in case the sound never loads)
-                while alive and not finished and os.clock() - startedAt < 90 do task.wait(0.1) end
+                    local vs = rec.sounds[pick]
+                    local startedAt = os.clock()
+                    local finished = false
+                    voicePlaying = vs
+                    vs.TimePosition = 0
+                    vs.Ended:Once(function() finished = true end)
+                    vs:Play()
+                    -- wait for it to end (timeout in case the sound never loads; a phase change cuts it short)
+                    while alive and not finished and voicePlaying == vs and os.clock() - startedAt < 90 do task.wait(0.1) end
+                    if voicePlaying == vs then voicePlaying = nil end
 
-                -- next line is timed from when this one started, but never before this one ended
-                nextAt = math.max(os.clock(), startedAt + minD + math.random() * (maxD - minD))
+                    -- next line is timed from when this one started, but never before this one ended
+                    if currentVoice == rec then
+                        nextAt = math.max(os.clock(), startedAt + minD + math.random() * (maxD - minD))
+                    end
+                else
+                    task.wait(0.25)
+                end
             end
         end)
     end
 
-    -- stomp sounds (optional): a random footstep each time the walk frame switches
-    local stompAssets = frames(stompSrc)
-    local stompSounds, lastStomp, lastStompPick = {}, -1, nil
-    if stompCfg and stompCfg.Enabled and #stompAssets > 0 then
-        for i, id in ipairs(stompAssets) do
+    -- stomp sounds: a random footstep each time the walk frame switches, from the CURRENT phase's StompSound
+    local lastStomp, lastStompPick = -1, nil
+    for _, rec in pairs(stompRecs) do
+        rec.sounds = {}
+        local sc = rec.cfg
+        for i, id in ipairs(rec.assets) do
             local ss = Instance.new("Sound")
             ss.Name = "SkinBrainStomp" .. i
             ss.SoundId = id
-            ss.Volume = stompCfg.Volume or 0.8
+            ss.Volume = sc.Volume or 0.8
             ss.Looped = false
-            if stompCfg.RollOffMaxDistance then ss.RollOffMaxDistance = stompCfg.RollOffMaxDistance end
+            if sc.RollOffMaxDistance then ss.RollOffMaxDistance = sc.RollOffMaxDistance end
             ss.Parent = root
             sounds[#sounds + 1] = ss
-            stompSounds[i] = ss
+            rec.sounds[i] = ss
         end
+        -- which walk frames get a footstep: all (default), odd (what the game does) or even
+        rec.parity = tostring(sc.Frames or "all"):lower()
     end
+    local curStomp -- the current phase's footstep set (nil = no footsteps), switched by applyPhase
 
-    -- which walk frames get a footstep: all (default), odd (what the game does) or even
-    local stompParity = stompCfg and tostring(stompCfg.Frames or "all"):lower() or "all"
     local function stompFrameOk(idx)
-        if stompParity == "odd" then return idx % 2 == 1 end
-        if stompParity == "even" then return idx % 2 == 0 end
+        local parity = curStomp and curStomp.parity or "all"
+        if parity == "odd" then return idx % 2 == 1 end
+        if parity == "even" then return idx % 2 == 0 end
         return true
     end
 
     local function playStomp()
-        local n = #stompSounds
+        local set = curStomp
+        local n = #set.sounds
         local pick = math.random(n)
         if n > 1 and pick == lastStompPick then pick = pick % n + 1 end -- no same footstep twice in a row
         lastStompPick = pick
-        local ss = stompSounds[pick]
-        local variation = stompCfg.PitchVariation or 0.08
+        local ss = set.sounds[pick]
+        local variation = set.cfg.PitchVariation or 0.08
         ss.PlaybackSpeed = 1 + (math.random() * 2 - 1) * variation
         ss.TimePosition = 0
         ss:Play()
@@ -2088,38 +2171,43 @@ function Brain.Run(userCfg)
     --   start / stop             : once when you start / stop moving
     --   jump / land              : once when you jump / land
     -- "run" means your running speed is at or above ReactiveSounds.RunSpeed, "walk" is moving slower than that
-    local reactives = {}
-    local reactiveRunSpeed = (reactiveCfg and tonumber(reactiveCfg.RunSpeed)) or 20
+    local reactives = {} -- the CURRENT phase's entries (switched by applyPhase)
+    local reactiveRunSpeed = 20
     local pendingJump, pendingLand = false, false
-    for _, spec in ipairs(reactiveSpecs) do
-        if #spec.assets == 0 then
-            warn(TAG .. "reactive sound " .. spec.index .. " (" .. spec.when .. ") has no usable Sound, skipping it")
-        else
-            local r = {
-                spec = spec, when = spec.when, sounds = {}, lastPlay = -1e9, vol = 0, active = false,
-                volume = math.max(tonumber(spec.Volume) or 1, 0),
-                fade = math.max(tonumber(spec.Fade) or 0.15, 0.01),
-                cooldown = math.max(tonumber(spec.Cooldown) or 0.2, 0),
-                pitch = math.max(tonumber(spec.PitchVariation) or 0, 0),
-                speed = tonumber(spec.PlaybackSpeed) or 1,
-            }
-            r.looping = (r.when == "walk" or r.when == "run" or r.when == "idle" or r.when == "move") and spec.Loop ~= false
-            for i, id in ipairs(spec.assets) do
-                local rs = Instance.new("Sound")
-                rs.Name = "SkinBrainReactive" .. spec.index .. "_" .. i
-                rs.SoundId = id
-                rs.Volume = r.looping and 0 or r.volume
-                rs.Looped = r.looping
-                rs.PlaybackSpeed = r.speed
-                if tonumber(spec.RollOffMaxDistance) then rs.RollOffMaxDistance = tonumber(spec.RollOffMaxDistance) end
-                rs.Parent = root
-                sounds[#sounds + 1] = rs
-                r.sounds[i] = rs
+    local anyReactive = false
+    for _, rec in pairs(reactiveRecs) do
+        rec.entries = {}
+        for _, spec in ipairs(rec.specs) do
+            if #spec.assets == 0 then
+                warn(TAG .. "reactive sound " .. spec.index .. " (" .. spec.when .. ") has no usable Sound, skipping it")
+            else
+                local r = {
+                    spec = spec, when = spec.when, sounds = {}, lastPlay = -1e9, vol = 0, active = false,
+                    volume = math.max(tonumber(spec.Volume) or 1, 0),
+                    fade = math.max(tonumber(spec.Fade) or 0.15, 0.01),
+                    cooldown = math.max(tonumber(spec.Cooldown) or 0.2, 0),
+                    pitch = math.max(tonumber(spec.PitchVariation) or 0, 0),
+                    speed = tonumber(spec.PlaybackSpeed) or 1,
+                }
+                r.looping = (r.when == "walk" or r.when == "run" or r.when == "idle" or r.when == "move") and spec.Loop ~= false
+                for i, id in ipairs(spec.assets) do
+                    local rs = Instance.new("Sound")
+                    rs.Name = "SkinBrainReactive" .. spec.index .. "_" .. i
+                    rs.SoundId = id
+                    rs.Volume = r.looping and 0 or r.volume
+                    rs.Looped = r.looping
+                    rs.PlaybackSpeed = r.speed
+                    if tonumber(spec.RollOffMaxDistance) then rs.RollOffMaxDistance = tonumber(spec.RollOffMaxDistance) end
+                    rs.Parent = root
+                    sounds[#sounds + 1] = rs
+                    r.sounds[i] = rs
+                end
+                rec.entries[#rec.entries + 1] = r
             end
-            reactives[#reactives + 1] = r
         end
+        if #rec.entries > 0 then anyReactive = true end
     end
-    if #reactives > 0 then
+    if anyReactive then
         conns[#conns + 1] = humanoid.StateChanged:Connect(function(_, new)
             if new == Enum.HumanoidStateType.Jumping then
                 pendingJump = true
@@ -2684,6 +2772,30 @@ function Brain.Run(userCfg)
             blend = {t0 = os.clock(), from = from, to = to}
         end
         if setGhostShape then setGhostShape(to.sx, to.sy) end -- ghosts are sized for the new billboard
+
+        -- audio for this phase: this phase's theme tracks fade in and the others fade out (a track both phases
+        -- share just keeps going), and voice lines / footsteps / reactive sounds switch to this phase's own sets
+        for _, rec in ipairs(themeList) do
+            rec.active = (rec == ph.themeRec or rec == ph.theme2Rec)
+            if instant then rec.vol = rec.active and rec.volume or 0 end -- the very first phase starts right away
+        end
+        if currentVoice ~= ph.voiceRec then
+            if voicePlaying then
+                voicePlaying:Stop()
+                voicePlaying = nil
+            end
+            currentVoice = ph.voiceRec
+        end
+        curStomp = (ph.stompRec and #ph.stompRec.sounds > 0) and ph.stompRec or nil
+        local newEntries = ph.reactiveRec and ph.reactiveRec.entries or {}
+        if newEntries ~= reactives then
+            for _, r in ipairs(reactives) do -- silence the old phase's reactive sounds
+                r.vol, r.active, r.current = 0, false, nil
+                for _, rs in ipairs(r.sounds) do rs:Stop() end
+            end
+            reactives = newEntries
+        end
+        reactiveRunSpeed = (ph.reactiveRec and tonumber(ph.reactiveRec.cfg.RunSpeed)) or 20
         if not instant then info(cfg, "phase: " .. ph.name) end
     end
     applyPhase(phaseIndex, true)
@@ -2732,6 +2844,7 @@ function Brain.Run(userCfg)
         end
 
         -- reactive sounds follow what you're really doing (not a forced FrameMode)
+        updateThemes(dt, now)
         updateReactive(dt, now, moving, runSpeed)
 
         -- frames
@@ -2752,7 +2865,7 @@ function Brain.Run(userCfg)
         -- stomps: one footstep every time the walk frame switches (same clock as the animation, so
         -- ScaleWalkWithSpeed speeds them up too). frames listed in FrameSkipStomp stay silent, and there's
         -- no sound in the air or while you're standing still. the first one plays right as you start walking
-        if #stompSounds > 0 then
+        if curStomp then
             if animWalk and moving then
                 if stepNo ~= lastStomp then
                     lastStomp = stepNo
@@ -2773,7 +2886,7 @@ function Brain.Run(userCfg)
                 end
                 warn(("%swalk frame %d | hop: %s | jiggle: %s | stomp: %s"):format(TAG, walkIdx,
                     state(cfg.FrameJump, skipJump), state(cfg.FrameJiggle, skipJiggle),
-                    state(#stompSounds > 0, skipStomp)))
+                    state(curStomp ~= nil, skipStomp)))
             elseif not animWalk then
                 lastDebugIdx = nil
             end
