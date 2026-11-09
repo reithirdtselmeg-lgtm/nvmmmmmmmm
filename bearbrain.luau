@@ -1,4 +1,4 @@
--- SkinBrain v3.11
+-- SkinBrain v3.12
 -- the boring work: downloads/caching, frame logic, billboard, effects, cleanup.
 -- you never need to edit this. all settings live in SkinTemplate.lua.
 -- host it (github raw link) or put it in your executor's workspace as "SkinBrain.lua".
@@ -9,7 +9,7 @@ local ContentProvider = game:GetService("ContentProvider")
 
 local env = (getgenv and getgenv()) or _G
 local TAG = "[SkinBrain] "
-local Brain = {Version = "3.11"}
+local Brain = {Version = "3.12"}
 
 -- --- DEFAULTS ---
 local DEFAULTS = {
@@ -169,7 +169,7 @@ local DEFAULTS = {
 }
 -- settings that are allowed to be nil (so they aren't flagged as typos)
 local OPTIONAL = {WalkFrameSwitchSpeed = true, IdleFrameSwitchSpeed = true, ThemeSound = true, PointLightModifier = true,
-    VoiceLines = true, StompSound = true, OrbOrbit = true, ExtraBillboards = true, ThemeSound2 = true, ReactiveSounds = true, ScareVariants = true, Phases = true, PhaseStart = true}
+    VoiceLines = true, StompSound = true, OrbOrbit = true, ExtraBillboards = true, ThemeSound2 = true, ReactiveSounds = true, ScareVariants = true, Phases = true, PhaseStart = true, SkinZip = true}
 
 -- scales a color's saturation/brightness (see ColorSaturation / ColorBrightness)
 local function fixColor(c, cfg)
@@ -284,6 +284,13 @@ local function isLink(src)
     return src:match("^https?://") ~= nil
 end
 
+-- a file you put in your executor's workspace folder yourself (a .png, .jpg or .zip)
+local function isLocalFile(src)
+    if not isfile or src:match("^rbx") then return false end
+    local ok, found = pcall(isfile, src)
+    return ok and found == true
+end
+
 local function hash(s)
     local h = 5381
     for i = 1, #s do h = (h * 33 + s:byte(i)) % 4294967296 end
@@ -296,7 +303,7 @@ local AUDIO_EXTS = {"mp3", "ogg", "wav", "flac"}
 -- headers that make sites (wikis/cdns) hand over the plain png instead of webp or a block page
 local HEADERS = {
     ["User-Agent"] = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36",
-    ["Accept"] = "image/png,image/jpeg,audio/mpeg,audio/ogg,*/*;q=0.5",
+    ["Accept"] = "image/png,image/jpeg,audio/mpeg,audio/ogg,application/zip,application/octet-stream,*/*;q=0.5",
 }
 
 -- detect the REAL file type from the bytes
@@ -320,6 +327,12 @@ local function sniff(body)
     local gif = body:sub(1, 6)
     if gif == "GIF87a" or gif == "GIF89a" then
         return "gif"
+    end
+
+    -- ZIP (a zip of pngs)
+    local zipSig = body:sub(1, 4)
+    if zipSig == "PK\3\4" or zipSig == "PK\5\6" then
+        return "zip"
     end
 
     -- OGG
@@ -366,6 +379,7 @@ end
 
 -- formats roblox definitely supports
 local function good(kind, ext, cfg)
+    if ext == "zip" then return kind == "image" end -- a zip of pngs
     if kind == "audio" then
     return ext == "mp3"
         or ext == "ogg"
@@ -785,6 +799,411 @@ local function dimsFromFiles(files)
     return nil
 end
 
+-- --- ZIP READER ---
+-- a zip of pngs: skin.zip holding idle1.png, idle2.png ... walk1.png, walk2.png ... (any capitals, any folders).
+-- inflate is the standard deflate decompressor (a port of the classic "puff" algorithm)
+local LBASE = {3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,131,163,195,227,258}
+local LEXT = {0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0}
+local DBASE = {1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577}
+local DEXT = {0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13}
+local CLORDER = {16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15}
+
+-- builds a huffman table from code lengths lengths[1..n]
+local function huffman(lengths, n)
+    local count = {}
+    for l = 0, 15 do count[l] = 0 end
+    for i = 1, n do count[lengths[i]] += 1 end
+    local offs = {[1] = 0}
+    for l = 1, 14 do offs[l + 1] = offs[l] + count[l] end
+    local symbol = {}
+    for i = 1, n do
+        local l = lengths[i]
+        if l ~= 0 then
+            symbol[offs[l]] = i - 1
+            offs[l] += 1
+        end
+    end
+    return {count = count, symbol = symbol}
+end
+
+local FIXED_LIT, FIXED_DIST
+local function fixedTables()
+    if not FIXED_LIT then
+        local l = {}
+        for i = 1, 144 do l[i] = 8 end
+        for i = 145, 256 do l[i] = 9 end
+        for i = 257, 280 do l[i] = 7 end
+        for i = 281, 288 do l[i] = 8 end
+        FIXED_LIT = huffman(l, 288)
+        local d = {}
+        for i = 1, 30 do d[i] = 5 end
+        FIXED_DIST = huffman(d, 30)
+    end
+    return FIXED_LIT, FIXED_DIST
+end
+
+-- decompresses raw deflate data that starts at data:byte(pos). returns the bytes as a string
+local function inflate(data, pos)
+    local len = #data
+    local bitbuf, bitcnt = 0, 0
+    local out, n = {}, 0
+    local lastYield = 0
+
+    local function bits(need)
+        local val = bitbuf
+        while bitcnt < need do
+            if pos > len then error("the zip data ended early") end
+            val = bor(val, lshift(data:byte(pos), bitcnt))
+            pos += 1
+            bitcnt += 8
+        end
+        bitbuf = rshift(val, need)
+        bitcnt -= need
+        return band(val, lshift(1, need) - 1)
+    end
+
+    local function decode(h)
+        local count, symbol = h.count, h.symbol
+        local code, first, index = 0, 0, 0
+        for l = 1, 15 do
+            if bitcnt == 0 then
+                if pos > len then error("the zip data ended early") end
+                bitbuf = data:byte(pos)
+                pos += 1
+                bitcnt = 8
+            end
+            code = bor(code, band(bitbuf, 1))
+            bitbuf = rshift(bitbuf, 1)
+            bitcnt -= 1
+            local c = count[l]
+            if code - c < first then
+                local sym = symbol[index + (code - first)]
+                if sym == nil then error("bad huffman code in the zip") end
+                return sym
+            end
+            index += c
+            first = lshift(first + c, 1)
+            code = lshift(code, 1)
+        end
+        error("bad huffman code in the zip")
+    end
+
+    local function codes(lit, dist)
+        while true do
+            local sym = decode(lit)
+            if sym < 256 then
+                n += 1
+                out[n] = sym
+            elseif sym == 256 then
+                return
+            else
+                sym -= 257
+                if sym >= 29 then error("bad length code in the zip") end
+                local l = LBASE[sym + 1] + bits(LEXT[sym + 1])
+                local ds = decode(dist)
+                if ds >= 30 then error("bad distance code in the zip") end
+                local d = DBASE[ds + 1] + bits(DEXT[ds + 1])
+                if d > n then error("bad distance in the zip") end
+                for _ = 1, l do
+                    n += 1
+                    out[n] = out[n - d]
+                end
+            end
+            if n - lastYield > 60000 then
+                lastYield = n
+                task.wait() -- keep the game responsive while a big zip opens
+            end
+        end
+    end
+
+    local function stored()
+        bitbuf, bitcnt = 0, 0
+        if pos + 3 > len then error("the zip data ended early") end
+        local a, b, c, d = data:byte(pos, pos + 3)
+        local l = a + b * 256
+        if l ~= bxor(c + d * 256, 0xFFFF) then error("bad stored block in the zip") end
+        pos += 4
+        if pos + l - 1 > len then error("the zip data ended early") end
+        local i = pos
+        while i < pos + l do
+            local j = math.min(i + 3999, pos + l - 1)
+            local chunk = {data:byte(i, j)}
+            for k = 1, #chunk do
+                n += 1
+                out[n] = chunk[k]
+            end
+            i = j + 1
+        end
+        pos += l
+    end
+
+    local function dynamic()
+        local nlen = bits(5) + 257
+        local ndist = bits(5) + 1
+        local ncode = bits(4) + 4
+        if nlen > 286 or ndist > 30 then error("bad block sizes in the zip") end
+        local lengths = {}
+        for i = 1, 19 do lengths[i] = 0 end
+        for i = 1, ncode do lengths[CLORDER[i] + 1] = bits(3) end
+        local lencode = huffman(lengths, 19)
+        local ll, idx = {}, 0
+        while idx < nlen + ndist do
+            local sym = decode(lencode)
+            if sym < 16 then
+                idx += 1
+                ll[idx] = sym
+            else
+                local prev, rep = 0, 0
+                if sym == 16 then
+                    if idx == 0 then error("bad repeat in the zip") end
+                    prev = ll[idx]
+                    rep = 3 + bits(2)
+                elseif sym == 17 then
+                    rep = 3 + bits(3)
+                else
+                    rep = 11 + bits(7)
+                end
+                if idx + rep > nlen + ndist then error("bad repeat in the zip") end
+                for _ = 1, rep do
+                    idx += 1
+                    ll[idx] = prev
+                end
+            end
+        end
+        local litLens, distLens = {}, {}
+        for i = 1, nlen do litLens[i] = ll[i] end
+        for i = 1, ndist do distLens[i] = ll[nlen + i] end
+        codes(huffman(litLens, nlen), huffman(distLens, ndist))
+    end
+
+    local last
+    repeat
+        last = bits(1)
+        local typ = bits(2)
+        if typ == 0 then
+            stored()
+        elseif typ == 1 then
+            local lit, dist = fixedTables()
+            codes(lit, dist)
+        elseif typ == 2 then
+            dynamic()
+        else
+            error("bad block type in the zip")
+        end
+    until last == 1
+
+    local parts, i = {}, 1
+    while i <= n do
+        local j = math.min(i + 3999, n)
+        parts[#parts + 1] = string.char(unpack(out, i, j))
+        i = j + 1
+    end
+    return table.concat(parts)
+end
+
+local function u16le(str, p)
+    local a, b = str:byte(p, p + 1)
+    return (a or 0) + (b or 0) * 256
+end
+local function u32le(str, p)
+    local a, b, c, d = str:byte(p, p + 3)
+    return (a or 0) + (b or 0) * 256 + (c or 0) * 65536 + (d or 0) * 16777216
+end
+
+-- which files of a zip we care about: pngs / jpgs (not folders, hidden files or the mac junk folder)
+local function zipWanted(name)
+    local n = (name:gsub("\\", "/")):lower()
+    if n:find("__macosx", 1, true) then return false end
+    local file = n:match("([^/]+)$")
+    if not file or file:sub(1, 1) == "." then return false end
+    return file:match("%.png$") ~= nil or file:match("%.jpe?g$") ~= nil
+end
+
+-- opens a zip: returns a list of {name = "folder/file.png", data = "<bytes>"} for the files wanted(name) accepts
+local function readZip(body, wanted)
+    local size = #body
+    local eocd
+    for p = size - 21, math.max(1, size - 65557), -1 do
+        if body:sub(p, p + 3) == "PK\5\6" then
+            eocd = p
+            break
+        end
+    end
+    if not eocd then error("not a valid zip (its file list wasn't found)") end
+    local total = u16le(body, eocd + 10)
+    local p = u32le(body, eocd + 16) + 1
+    local files = {}
+    for _ = 1, total do
+        if body:sub(p, p + 3) ~= "PK\1\2" then break end
+        local flags = u16le(body, p + 8)
+        local method = u16le(body, p + 10)
+        local csize = u32le(body, p + 20)
+        local usize = u32le(body, p + 24)
+        local nlen, elen, clen = u16le(body, p + 28), u16le(body, p + 30), u16le(body, p + 32)
+        local lpos = u32le(body, p + 42) + 1
+        local name = body:sub(p + 46, p + 45 + nlen)
+        p = p + 46 + nlen + elen + clen
+        if usize > 0 and name:sub(-1) ~= "/" and wanted(name) then
+            if band(flags, 1) ~= 0 then
+                warn(TAG .. "skipped '" .. name .. "' (it is password protected)")
+            elseif method ~= 0 and method ~= 8 then
+                warn(TAG .. "skipped '" .. name .. "' (unsupported zip compression)")
+            else
+                if body:sub(lpos, lpos + 3) ~= "PK\3\4" then error("a zip entry is damaged") end
+                local dstart = lpos + 30 + u16le(body, lpos + 26) + u16le(body, lpos + 28)
+                local data
+                if method == 0 then
+                    data = body:sub(dstart, dstart + csize - 1)
+                else
+                    data = inflate(body, dstart)
+                end
+                if #data ~= usize then error("a zip entry came out the wrong size: " .. name) end
+                files[#files + 1] = {name = name, data = data}
+            end
+        end
+    end
+    return files
+end
+
+-- natural order: idle2 comes before idle10, and capitals don't matter
+local function natLess(a, b)
+    a, b = a:lower(), b:lower()
+    local i, j = 1, 1
+    while i <= #a and j <= #b do
+        local da, db = a:match("^%d+", i), b:match("^%d+", j)
+        if da and db then
+            local na, nb = tonumber(da), tonumber(db)
+            if na ~= nb then return na < nb end
+            i += #da
+            j += #db
+        else
+            local ca, cb = a:sub(i, i), b:sub(j, j)
+            if ca ~= cb then return ca < cb end
+            i += 1
+            j += 1
+        end
+    end
+    return (#a - i) < (#b - j)
+end
+
+-- which frame a file in the zip is: idle1.png / IDLE_2.PNG / Walk 3.png -> ("idle", 1) ... ; a bare number inside
+-- an Idle or Walk folder (Walk/3.png) counts too. a name with no number is frame 1
+local function zipRole(path)
+    local parts = {}
+    for part in (path:gsub("\\", "/")):gmatch("[^/]+") do parts[#parts + 1] = part end
+    local file = parts[#parts]
+    if not file then return nil end
+    local stem = (file:gsub("%.%w+$", "")):lower()
+    local word, digits = stem:match("^(%a+)[%s_%-]*(%d*)$")
+    if word == "idle" or word == "walk" then return word, tonumber(digits) or 1 end
+    local d = stem:match("^(%d+)$")
+    local dir = parts[#parts - 1]
+    if d and dir then
+        dir = dir:lower()
+        if dir == "idle" or dir == "walk" then return dir, tonumber(d) end
+    end
+    return nil
+end
+
+-- opens a zip of pngs, saves every png and returns the usual ARRAY of assets (all pngs in natural name order)
+-- with .roles = {idle = {...}, walk = {...}} added (numbered by their file names), plus the files it wrote
+local function extractZip(body, prefix, cfg, use)
+    local ok, files = pcall(readZip, body, zipWanted)
+    if not ok then
+        warn(TAG .. "couldn't open that zip: " .. tostring(files))
+        return nil
+    end
+    if #files == 0 then
+        warn(TAG .. "that zip has no png/jpg files in it")
+        return nil
+    end
+    table.sort(files, function(x, y) return natLess(x.name, y.name) end)
+
+    local assets, paths, manifest = {}, {}, {}
+    local roleLists = {idle = {}, walk = {}}
+    for i, f in ipairs(files) do
+        local ext = sniff(f.data)
+        if ext == "png" or ext == "jpg" then
+            local p = ("%s_z%03d.%s"):format(prefix, i, ext)
+            pcall(writefile, p, f.data)
+            local a = use(p)
+            if a then
+                assets[#assets + 1] = a
+                paths[#paths + 1] = p
+                manifest[#manifest + 1] = "all\t" .. p
+                if cfg.SliceGlitch then ASSET_DIMS[a] = imageSize(f.data) end
+                local role, num = zipRole(f.name)
+                if role then table.insert(roleLists[role], {num = num, name = f.name, asset = a, path = p}) end
+            else
+                warn(TAG .. "getcustomasset failed for a frame of the zip: " .. f.name)
+            end
+        end
+    end
+    if #assets == 0 then
+        warn(TAG .. "none of the images in that zip could be used")
+        return nil
+    end
+
+    assets.roles = {idle = {}, walk = {}}
+    for role, list in pairs(roleLists) do
+        table.sort(list, function(x, y)
+            if x.num ~= y.num then return x.num < y.num end
+            return natLess(x.name, y.name)
+        end)
+        local lastNum
+        for _, e in ipairs(list) do
+            if e.num == lastNum then
+                warn(("%s'%s' has the same %s frame number as another file in the zip, skipping it"):format(TAG, e.name, role))
+            else
+                lastNum = e.num
+                assets.roles[role][#assets.roles[role] + 1] = e.asset
+                manifest[#manifest + 1] = role .. "\t" .. e.path
+            end
+        end
+    end
+    local manifestPath = prefix .. "_zip.txt"
+    pcall(writefile, manifestPath, table.concat(manifest, "\n"))
+    paths[#paths + 1] = manifestPath
+    info(cfg, ("zip opened: %d image(s), %d idle frame(s), %d walk frame(s)"):format(#assets, #assets.roles.idle, #assets.roles.walk))
+    if #assets.roles.idle == 0 and #assets.roles.walk == 0 then
+        warn(TAG .. "no file in that zip is named idle1.png / walk1.png style, so it can only be used where every image is wanted (orbs, scares)")
+    end
+    return assets, paths
+end
+
+-- a zip we already opened on an earlier run
+local function loadZipCache(manifestPath, cfg, use)
+    local okr, txt = pcall(readfile, manifestPath)
+    if not okr or type(txt) ~= "string" then return nil end
+    local byPath, assets, paths = {}, {}, {manifestPath}
+    local roles = {idle = {}, walk = {}}
+    for line in txt:gmatch("[^\r\n]+") do
+        local kind, p = line:match("^(%a+)\t(.+)$")
+        if kind and p then
+            if not byPath[p] then
+                if not isfile(p) then return nil end
+                local a = use(p)
+                if not a then return nil end
+                byPath[p] = a
+                paths[#paths + 1] = p
+                if cfg.SliceGlitch then
+                    local okf, data = pcall(readfile, p)
+                    if okf then ASSET_DIMS[a] = imageSize(data) end
+                end
+            end
+            if kind == "all" then
+                assets[#assets + 1] = byPath[p]
+            elseif roles[kind] then
+                roles[kind][#roles[kind] + 1] = byPath[p]
+            end
+        end
+    end
+    if #assets == 0 then return nil end
+    assets.roles = roles
+    info(cfg, ("zip (cached): %d image(s), %d idle frame(s), %d walk frame(s)"):format(#assets, #roles.idle, #roles.walk))
+    return assets, paths
+end
+
 local function findCached(prefix, kind)
     local list = (kind == "audio") and AUDIO_EXTS or IMAGE_EXTS
     for _, e in ipairs(list) do
@@ -858,7 +1277,31 @@ local function fetch(url, kind, cfg)
         return nil
     end
 
+    -- a file from your executor's workspace folder: a png/jpg is used as it is (it is never deleted), a zip is opened
+    if not isLink(url) then
+        local okr, data = pcall(readfile, url)
+        if not okr or type(data) ~= "string" or #data == 0 then
+            warn(TAG .. "couldn't read the file: " .. url)
+            return nil
+        end
+        local ext = sniff(data)
+        if ext == "zip" and kind == "image" then return extractZip(data, prefix, cfg, use) end
+        if ext and ext ~= "zip" and good(kind, ext, cfg) then
+            local a = use(url)
+            if a then return {a}, {} end
+        end
+        warn(TAG .. "that file isn't a png/jpg/zip (or mp3/ogg for sounds): " .. url)
+        return nil
+    end
+
     if not cfg.ForceRedownload then
+        -- a zip we already opened on an earlier run?
+        local zipManifest = prefix .. "_zip.txt"
+        if kind == "image" and readfile and isfile(zipManifest) then
+            local za, zp = loadZipCache(zipManifest, cfg, use)
+            if za then return za, zp end
+        end
+
         -- a gif we already split into png frames on an earlier run?
         local manifest = prefix .. "_gif.txt"
         if kind == "image" and readfile and isfile(manifest) then
@@ -896,6 +1339,10 @@ local function fetch(url, kind, cfg)
         return nil
     end
 
+    if extOrReason == "zip" and kind == "image" then
+        return extractZip(body, prefix, cfg, use)
+    end
+
     if extOrReason == "gif" and kind == "image" and cfg.ConvertGifs then
         return convertGif(body, prefix, cfg, use)
     end
@@ -923,12 +1370,12 @@ local function resolveAll(entries, cfg)
             out[src] = false
             if isRobloxAsset(src) then
                 out[src] = {src}
-            elseif isLink(src) then
+            elseif isLink(src) or isLocalFile(src) then
                 pending += 1
                 task.spawn(function()
                     local assets, files = fetch(src, e.kind, cfg)
                     out[src] = assets or false
-                    if assets and cfg.SliceGlitch and e.kind == "image" then
+                    if assets and not assets.roles and cfg.SliceGlitch and e.kind == "image" then -- (zip frames got their own sizes)
                         local dims = dimsFromFiles(files) -- every frame of a gif has the same size
                         if dims then
                             for _, a in ipairs(assets) do ASSET_DIMS[a] = dims end
@@ -940,7 +1387,7 @@ local function resolveAll(entries, cfg)
                     pending -= 1
                 end)
             else
-                warn(TAG .. "can't use '" .. src .. "' (use rbxassetid://..., a number, or an http(s) link)")
+                warn(TAG .. "can't use '" .. src .. "' (use rbxassetid://..., a number, an http(s) link, or a file in your workspace folder)")
             end
         end
     end
@@ -1116,6 +1563,11 @@ function Brain.Run(userCfg)
     end
     local idleSrc = collect(cfg.Idle, "image")
     local walkSrc = collect(cfg.Walk, "image")
+    -- SkinZip: a zip of pngs named idle1.png, walk1.png ... gives BOTH lists. its frames come after your own lists
+    for _, z in ipairs(collect(cfg.SkinZip, "image")) do
+        idleSrc[#idleSrc + 1] = z
+        walkSrc[#walkSrc + 1] = z
+    end
     -- scare event: the main scare (ScareImage / ScareSound ...) plus every entry in ScareVariants. a variant can override
     -- any Scare setting (Image, Sound, Volume, SizeX, SizeY, StudsOffsetX/Y/Z, Brightness, Shake, RemoveBear,
     -- RemoveAfterimage ...) and whatever it leaves out comes from the main scare. only downloaded when the event is on
@@ -1212,8 +1664,17 @@ function Brain.Run(userCfg)
                 local sp = {}
                 for k, v in pairs(p) do sp[k] = v end
                 sp.name = tostring(p.Name or ("phase " .. i))
-                sp.idleSrc = (p.Idle ~= nil) and collect(p.Idle, "image") or idleSrc
-                sp.walkSrc = (p.Walk ~= nil) and collect(p.Walk, "image") or walkSrc
+                -- a phase's own sprites: its Idle / Walk lists and/or a Zip (a zip of idle1.png, walk1.png ...).
+                -- a phase that sets none of them keeps your main sprites
+                local zips = (p.Zip ~= nil) and collect(p.Zip, "image") or nil
+                local function own(list)
+                    if p[list] == nil and not zips then return nil end
+                    local srcs = (p[list] ~= nil) and collect(p[list], "image") or {}
+                    for _, z in ipairs(zips or {}) do srcs[#srcs + 1] = z end
+                    return srcs
+                end
+                sp.idleSrc = own("Idle") or idleSrc
+                sp.walkSrc = own("Walk") or walkSrc
                 phaseSpecs[#phaseSpecs + 1] = sp
             end
         end
@@ -1295,6 +1756,10 @@ function Brain.Run(userCfg)
                 spec.index = i
                 spec.idleSrc = collect(spec.Idle, "image")
                 spec.walkSrc = collect(spec.Walk, "image")
+                for _, z in ipairs(collect(spec.Zip, "image")) do -- Zip = a zip of idle1.png, walk1.png ...
+                    spec.idleSrc[#spec.idleSrc + 1] = z
+                    spec.walkSrc[#spec.walkSrc + 1] = z
+                end
                 extraSpecs[#extraSpecs + 1] = spec
             end
         end
@@ -1309,17 +1774,20 @@ function Brain.Run(userCfg)
         end
     end
 
-    local function frames(srcList)
+    -- role = "idle" / "walk": a zip then only gives the files named for that role. without a role every image of a zip is used
+    local function frames(srcList, role)
         local out = {}
         for _, s in ipairs(srcList) do
             local r = resolved[s]
             if r then
-                for _, a in ipairs(r) do out[#out + 1] = a end
+                local list = r
+                if role and r.roles then list = r.roles[role] or {} end
+                for _, a in ipairs(list) do out[#out + 1] = a end
             end
         end
         return out
     end
-    local mainIdle, mainWalk = frames(idleSrc), frames(walkSrc)
+    local mainIdle, mainWalk = frames(idleSrc, "idle"), frames(walkSrc, "walk")
     if #mainIdle == 0 and #mainWalk > 0 then mainIdle = {mainWalk[1]} end
     if #mainWalk == 0 then mainWalk = mainIdle end
 
@@ -1327,7 +1795,7 @@ function Brain.Run(userCfg)
     for i, sp in ipairs(phaseSpecs) do
         local ph = {name = sp.name, spec = sp, themeRec = sp.themeRec, theme2Rec = sp.theme2Rec,
             voiceRec = sp.voiceRec, stompRec = sp.stompRec, reactiveRec = sp.reactiveRec}
-        ph.idle, ph.walk = frames(sp.idleSrc), frames(sp.walkSrc)
+        ph.idle, ph.walk = frames(sp.idleSrc, "idle"), frames(sp.walkSrc, "walk")
         if #ph.idle == 0 and #ph.walk > 0 then ph.idle = {ph.walk[1]} end
         if #ph.walk == 0 then ph.walk = ph.idle end
         if #ph.idle == 0 then ph.idle, ph.walk = mainIdle, mainWalk end
@@ -1362,7 +1830,7 @@ function Brain.Run(userCfg)
         spec.texture = spec.textureSrc and frames(spec.textureSrc)[1] or nil
     end
     for _, spec in ipairs(extraSpecs) do
-        spec.idle, spec.walk = frames(spec.idleSrc), frames(spec.walkSrc)
+        spec.idle, spec.walk = frames(spec.idleSrc, "idle"), frames(spec.walkSrc, "walk")
         if #spec.idle == 0 and #spec.walk > 0 then spec.idle = {spec.walk[1]} end
         if #spec.walk == 0 then spec.walk = spec.idle end
     end
@@ -1375,7 +1843,7 @@ function Brain.Run(userCfg)
         for _, spec in ipairs(rec.specs) do spec.assets = frames(spec.src) end
     end
     info(cfg, ("loaded '%s': %d idle frame(s), %d walk frame(s)"):format(
-        cfg.SkinName, #frames(idleSrc), #frames(walkSrc)))
+        cfg.SkinName, #frames(idleSrc, "idle"), #frames(walkSrc, "walk")))
     if #idle == 0 then
         warn(TAG .. "no usable sprites loaded, nothing to show")
         wipeDownloads()
