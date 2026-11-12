@@ -1,4 +1,4 @@
--- SkinBrain v3.12
+-- SkinBrain v3.13
 -- the boring work: downloads/caching, frame logic, billboard, effects, cleanup.
 -- you never need to edit this. all settings live in SkinTemplate.lua.
 -- host it (github raw link) or put it in your executor's workspace as "SkinBrain.lua".
@@ -9,7 +9,7 @@ local ContentProvider = game:GetService("ContentProvider")
 
 local env = (getgenv and getgenv()) or _G
 local TAG = "[SkinBrain] "
-local Brain = {Version = "3.12"}
+local Brain = {Version = "3.13"}
 
 -- --- DEFAULTS ---
 local DEFAULTS = {
@@ -132,7 +132,7 @@ local DEFAULTS = {
     -- TBB-style scare event: every ScareInterval seconds an image flashes over your skin and a sound plays.
     -- the scare ends when the sound ends
     ScareEvent = false,
-    ScareInterval = 24,            -- seconds between scares (from the start of one to the start of the next)
+    -- ScareInterval = {18, 29},  -- seconds between scares: a range {min, max} is rolled again every time, a single number is fixed (see below)
     ScareRemoveBear = false,       -- true = your main skin billboard is hidden during the scare, then comes back
     ScareRemoveAfterimage = false, -- true = the afterimage is hidden during the scare, then comes back
     ScareImage = "https://static.wikia.nocookie.net/roblox-bear-content/images/9/90/TBB_Classic_Scare1.png/revision/latest/scale-to-width-down/185?cb=20260211113902",
@@ -169,7 +169,7 @@ local DEFAULTS = {
 }
 -- settings that are allowed to be nil (so they aren't flagged as typos)
 local OPTIONAL = {WalkFrameSwitchSpeed = true, IdleFrameSwitchSpeed = true, ThemeSound = true, PointLightModifier = true,
-    VoiceLines = true, StompSound = true, OrbOrbit = true, ExtraBillboards = true, ThemeSound2 = true, ReactiveSounds = true, ScareVariants = true, Phases = true, PhaseStart = true, SkinZip = true}
+    VoiceLines = true, StompSound = true, OrbOrbit = true, ExtraBillboards = true, ThemeSound2 = true, ReactiveSounds = true, ScareVariants = true, Phases = true, PhaseStart = true, SkinZip = true, ScareInterval = true}
 
 -- scales a color's saturation/brightness (see ColorSaturation / ColorBrightness)
 local function fixColor(c, cfg)
@@ -178,6 +178,25 @@ local function fixColor(c, cfg)
     if sat == 1 and bri == 1 then return c end
     local h, sv, v = c:ToHSV()
     return Color3.fromHSV(h, math.clamp(sv * sat, 0, 1), math.clamp(v * bri, 0, 1))
+end
+
+-- a time that is either a single number (always exactly that) or a range {min, max} (rolled again every time).
+-- returns {min, max}. a missing/invalid value falls back to the defaults
+local function intervalRange(v, defMin, defMax)
+    local a, b
+    if type(v) == "number" then
+        a, b = v, v
+    elseif type(v) == "table" then
+        a = tonumber(v[1] or v.Min)
+        b = tonumber(v[2] or v.Max) or a
+    end
+    a, b = a or defMin, b or defMax
+    if b < a then a, b = b, a end
+    a = math.max(a, 1)
+    return {a, math.max(b, a)}
+end
+local function rollInterval(r)
+    return r[1] + math.random() * (r[2] - r[1])
 end
 
 -- alternate spellings that are accepted for a few settings
@@ -216,7 +235,8 @@ local function buildConfig(user)
     cfg.Brightness = math.max(cfg.Brightness, 0)
     cfg.AfterimageBrightness = math.max(cfg.AfterimageBrightness, 0)
     cfg.ScareBrightness = math.max(cfg.ScareBrightness, 0)
-    cfg.ScareInterval = math.max(cfg.ScareInterval, 1)
+    -- ScareInterval: seconds between scares. a range {min, max} is rolled again every time (default 18 to 29), a number is fixed
+    cfg.ScareInterval = intervalRange(cfg.ScareInterval, 18, 29)
     cfg.ScareVolume = math.clamp(cfg.ScareVolume, 0, 10)
     cfg.ScareFallbackTime = math.max(cfg.ScareFallbackTime, 0.2)
     cfg.ScareMainWeight = math.max(cfg.ScareMainWeight, 0)
@@ -2821,7 +2841,7 @@ function Brain.Run(userCfg)
 
             task.spawn(function()
                 local lastPick, orderIdx = nil, 0
-                local nextAt = os.clock() + cfg.ScareInterval
+                local nextAt = os.clock() + rollInterval(cfg.ScareInterval)
                 while alive do
                     while alive and os.clock() < nextAt do task.wait(0.25) end
                     if not alive then break end
@@ -2945,7 +2965,10 @@ function Brain.Run(userCfg)
                     if hideBear then gui.Enabled = true end
                     scareActive = false
                     scareHideGhosts = false
-                    nextAt = math.max(os.clock(), startedAt + (tonumber(sp.Interval) or cfg.ScareInterval))
+                    -- the next scare: this scare's own Interval (a number or a {min, max} range) or the main ScareInterval,
+                    -- counted from when this one started but never before it ended
+                    local gap = (sp.Interval ~= nil) and intervalRange(sp.Interval, cfg.ScareInterval[1], cfg.ScareInterval[2]) or cfg.ScareInterval
+                    nextAt = math.max(os.clock(), startedAt + rollInterval(gap))
                 end
             end)
         end
